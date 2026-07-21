@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+# generated artifacts (kept out of the code repo)
+output/
+*.eml
