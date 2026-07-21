@@ -1,0 +1,5 @@
+.git
+output/
+__pycache__/
+*.pyc
+*.eml
