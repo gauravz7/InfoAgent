@@ -1,4 +1,4 @@
-# Container for the digest pipeline, run as a Cloud Run Job (Mon/Thu via Scheduler).
+# Container for the digest pipeline, run as a Cloud Run Job (daily via Scheduler).
 FROM python:3.12-slim
 
 RUN apt-get update \
@@ -7,6 +7,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY . /app
+# Lean runtime: the headless pipeline needs only these three.
 RUN pip install --no-cache-dir google-genai requests pillow
 
 # Vertex/Gemini auth is native ADC from the attached service account.

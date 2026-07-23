@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Autonomous daily ArXiv AI-Agent Research Digest pipeline.
+"""Ambient (headless) end-to-end digest run for schedule / Cloud Run Job.
 
-Runs six stages end-to-end and writes everything under output/<YYYY-MM-DD>/:
+This is the non-interactive twin of the interactive orchestrator in ``agent.py``.
+It runs all six stages start-to-finish and writes everything under
+``output/<YYYY-MM-DD>/`` -- the same behavior as the pre-agent
+``daily_arxiv_agent.py`` entrypoint, now living inside the ADK package.
 
-    Fetch  ->  Select  ->  Synthesize  ->  Render Visuals  ->  Build MD & HTML  ->  Dispatch
+    Fetch -> Select -> Synthesize -> Render Visuals -> Build MD & HTML -> Dispatch
 
-Auth: Google ADC (Vertex).  Models: gemini-3.1-flash-lite (text) +
-gemini-3.1-flash-lite-image (diagrams).  No API keys in source.
-
-Usage:
-    python3 daily_arxiv_agent.py                 # full live run, dry-run email
-    python3 daily_arxiv_agent.py --quick         # fast smoke run
-    python3 daily_arxiv_agent.py --days 30 --top 3
-    python3 daily_arxiv_agent.py --no-images     # skip image generation
-    python3 daily_arxiv_agent.py --send          # actually email (needs SMTP env)
+Usage (from repo root):
+    uv run python -m app.runner                 # full live run, dry-run email
+    uv run python -m app.runner --quick         # fast smoke run
+    uv run python -m app.runner --days 30 --top 3
+    uv run python -m app.runner --no-images     # skip image generation
+    uv run python -m app.runner --send          # actually email (needs SMTP env)
 """
 
 from __future__ import annotations
@@ -25,9 +25,8 @@ import os
 import re
 import sys
 
-import config
-import pipeline
-from convert_md_to_full_html import render_paper_html, build_full_html
+from . import config, pipeline
+from .render import build_full_html, render_paper_html
 
 
 def _slug(text: str, maxlen: int = 40) -> str:
@@ -84,8 +83,25 @@ def _news_source_html(topic) -> str:
     return head + f'<p class="paper-src"><strong>Sources:</strong> {_html.escape(srcs)}</p>'
 
 
+def _blog_source_html(blog) -> str:
+    org = _html.escape(blog.org or blog.source or "Engineering blog")
+    date = f" · <strong>Published:</strong> {_html.escape(blog.date)}" if blog.date else ""
+    head = (
+        f'<p class="paper-src"><strong>Engineering blog</strong> · {org}{date} · '
+        f'salience {blog.salience:.1f}/10</p>'
+    )
+    why = ""
+    if blog.why:
+        why = f'<p class="paper-src"><em>Why it matters: {_html.escape(blog.why)}</em></p>'
+    link = ""
+    if (blog.url or "").startswith("http"):
+        link = (f'<p class="paper-src"><strong>Read the post:</strong> '
+                f'<a href="{_html.escape(blog.url, quote=True)}">{org}</a></p>')
+    return head + why + link
+
+
 def run(days: int, top_n: int, quick: bool, no_images: bool, send: bool,
-        no_news: bool = False, verbose: bool = True) -> dict:
+        no_news: bool = False, no_blogs: bool = False, verbose: bool = True) -> dict:
     today = _dt.date.today().isoformat()
     run_id = _dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     out_dir = os.path.join(config.OUTPUT_ROOT, today)
@@ -94,6 +110,8 @@ def run(days: int, top_n: int, quick: bool, no_images: bool, send: bool,
 
     paper_words = config.QUICK_WORDS if quick else config.PAPER_WORDS
     news_words = config.QUICK_WORDS if quick else config.NEWS_WORDS
+    blog_words = config.QUICK_WORDS if quick else config.BLOG_WORDS
+    blog_top = 2 if quick else config.BLOG_TOP_N
     imgs_per_paper = 1 if quick else config.IMAGES_PER_PAPER   # keep 5 for papers
     news_imgs = 1 if quick else config.NEWS_IMAGES             # lean news visuals
 
@@ -172,12 +190,40 @@ def run(days: int, top_n: int, quick: bool, no_images: bool, send: bool,
                 "body_html": body_html,
             })
 
+    # 4c. Engineering blogs: fetch -> accumulate -> rank over last BLOG_HISTORY_DAYS
+    blog_sections = []
+    if not no_blogs:
+        blog_days = config.BLOG_HISTORY_DAYS
+        print(f"[4c] Engineering Blogs (fetch + rank over last {blog_days} days)")
+        fresh = pipeline.fetch_engineering_blogs(run_id, days=blog_days, verbose=verbose)
+        if fresh:
+            pipeline.append_blog_history(fresh)
+        blogs = pipeline.select_blogs(days=blog_days, top_n=blog_top, verbose=verbose)
+        for k, blog in enumerate(blogs, 1):
+            print(f"  [blogs] synthesize post {k}/{len(blogs)}")
+            md = pipeline.synthesize_blog(blog, words=blog_words, verbose=verbose)
+            md = _guard_no_banned(md, f"blog post {k} markdown")
+            md_name = f"blog{k}_{_slug(blog.title)}_brief.md"
+            with open(os.path.join(out_dir, md_name), "w", encoding="utf-8") as fh:
+                fh.write(md)
+            # blogs are link-forward: no generated diagrams
+            body_html = render_paper_html(md, [], images_prefix="images")
+            m = re.search(r"^#\s+(.*)$", md, flags=re.MULTILINE)
+            headline = m.group(1).strip() if m else blog.title
+            blog_sections.append({
+                "title": headline,
+                "source_html": _blog_source_html(blog),
+                "body_html": body_html,
+            })
+
     # 5. Build full HTML ----------------------------------------------------
     print("[5/6] Build MD & HTML")
     subtitle = (f"Top {len(paper_sections)} AI-agent papers (last {days} days)"
-                + (f" + Top {len(news_sections)} AI-news topics" if news_sections else ""))
+                + (f" + Top {len(news_sections)} AI-news topics" if news_sections else "")
+                + (f" + Top {len(blog_sections)} eng blogs" if blog_sections else ""))
     title = "ArXiv AI-Agent Research Digest"
-    full_html = build_full_html(title, subtitle, today, paper_sections, news_sections)
+    full_html = build_full_html(title, subtitle, today, paper_sections,
+                                news_sections, blog_sections)
     full_html = _guard_no_banned(full_html, "final HTML")
 
     # 6. Dispatch -----------------------------------------------------------
@@ -200,7 +246,7 @@ def run(days: int, top_n: int, quick: bool, no_images: bool, send: bool,
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Autonomous daily ArXiv AI-agent digest")
+    ap = argparse.ArgumentParser(description="Ambient ArXiv AI-agent digest run")
     ap.add_argument("--days", type=int, default=config.WINDOW_DAYS,
                     help=f"lookback window in days (default {config.WINDOW_DAYS})")
     ap.add_argument("--top", type=int, default=config.TOP_N,
@@ -211,13 +257,16 @@ def main(argv=None):
                     help="skip Gemini image generation (use placeholders)")
     ap.add_argument("--no-news", action="store_true",
                     help="skip the Recent AI News track")
+    ap.add_argument("--no-blogs", action="store_true",
+                    help="skip the Engineering Blogs track")
     ap.add_argument("--send", action="store_true",
                     help="actually send email (requires SMTP_* env vars)")
     args = ap.parse_args(argv)
 
     try:
         run(days=args.days, top_n=args.top, quick=args.quick,
-            no_images=args.no_images, send=args.send, no_news=args.no_news)
+            no_images=args.no_images, send=args.send, no_news=args.no_news,
+            no_blogs=args.no_blogs)
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
         return 130

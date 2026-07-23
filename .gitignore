@@ -5,3 +5,6 @@ venv/
 # generated artifacts (kept out of the code repo)
 output/
 *.eml
+# archived ADK agent / eval / tests and CLI runtime artifacts (kept on disk only)
+archive/
+.google-agents-cli/

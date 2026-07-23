@@ -1,8 +1,11 @@
-"""Central configuration for the ArXiv AI-Agent Research Digest pipeline.
+"""Central configuration for the ArXiv AI-Agent Research Digest agent.
 
 All tunables, theme tokens, model IDs and constants live here so the rest of the
-pipeline stays declarative. No secrets are stored here -- authentication is via
+package stays declarative. No secrets are stored here -- authentication is via
 Google Application Default Credentials (ADC) and optional SMTP env vars.
+
+Importing this module also wires the GenAI/Vertex environment (project, location,
+USE_VERTEXAI) the way the ADK expects, mirroring the google-agents-cli samples.
 """
 
 from __future__ import annotations
@@ -10,16 +13,40 @@ from __future__ import annotations
 import os
 
 # --------------------------------------------------------------------------- #
-# Google GenAI / Vertex configuration (ADC-based, no API keys in source)
+# Google GenAI / Vertex auth (ADC-based, no API keys in source)
 # --------------------------------------------------------------------------- #
-GENAI_PROJECT = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID") or os.environ.get(
-    "GOOGLE_CLOUD_PROJECT", "vital-octagon-19612"
+# Resolve the Vertex project: explicit env wins, else fall back to ADC's project,
+# else the pipeline's historical default. GenAI text/image models run in the
+# `global` location; the deployment/infra region is separate (us-central1).
+GENAI_PROJECT = (
+    os.environ.get("GOOGLE_CLOUD_PROJECT")
+    or os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
 )
-GENAI_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION") or os.environ.get(
-    "CLOUD_ML_REGION", "global"
+if not GENAI_PROJECT:
+    try:
+        import google.auth
+
+        _, GENAI_PROJECT = google.auth.default()
+    except Exception:  # noqa: BLE001 - keep import side effects non-fatal
+        GENAI_PROJECT = None
+GENAI_PROJECT = GENAI_PROJECT or "vital-octagon-19612"
+
+GENAI_LOCATION = (
+    os.environ.get("GOOGLE_CLOUD_LOCATION")
+    or os.environ.get("CLOUD_ML_REGION")
+    or "global"
 )
 
-# Verified-available models on this project (see plan).
+# Make the resolved values visible to the ADK / google-genai clients.
+os.environ.setdefault("GOOGLE_CLOUD_PROJECT", GENAI_PROJECT)
+os.environ.setdefault("GOOGLE_CLOUD_LOCATION", GENAI_LOCATION)
+os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "True")
+
+# Model the interactive orchestrator (root LlmAgent) reasons with. The pipeline's
+# own text/image generation keeps its proven flash-lite models below, unchanged.
+ORCHESTRATOR_MODEL = os.environ.get("DIGEST_ORCHESTRATOR_MODEL", "gemini-flash-latest")
+
+# Verified-available models on this project (pipeline generation -- do NOT change).
 TEXT_MODEL = os.environ.get("DIGEST_TEXT_MODEL", "gemini-3.1-flash-lite")
 IMAGE_MODEL = os.environ.get("DIGEST_IMAGE_MODEL", "gemini-3.1-flash-lite-image")
 
@@ -35,9 +62,10 @@ PRICE_PER_IMAGE = float(os.environ.get("PRICE_PER_IMAGE", "0.039"))             
 ARXIV_API = "https://export.arxiv.org/api/query"
 CATEGORIES = ["cs.AI", "cs.CL", "cs.MA", "cs.SE"]
 
-WINDOW_DAYS = 7          # rolling lookback window (override via --days)
-TOP_N = 3               # number of papers to feature (override via --top)
+WINDOW_DAYS = 7          # rolling lookback window (override via tool/CLI arg)
+TOP_N = 3               # number of papers to feature (override via tool/CLI arg)
 MAX_CANDIDATES = 180     # how many recent papers to pull before ranking
+TRENDING_PER_RUN = 12    # grounded-search "top trending papers" merged into the pool
 
 # --------------------------------------------------------------------------- #
 # Recent AI news track  (grounded search -> rolling history -> cluster top 3)
@@ -46,6 +74,26 @@ NEWS_TOP_N = 3               # number of clustered news TOPICS to feature
 NEWS_PER_RUN = 12            # raw headlines pulled each run before clustering
 NEWS_HISTORY_DAYS = 7        # cluster news accumulated over the last N days
 NEWS_HISTORY_FILE = "news_history.jsonl"  # rolling store under OUTPUT_ROOT
+
+# --------------------------------------------------------------------------- #
+# Engineering blogs track  (grounded search -> rolling history -> pick top N)
+# Recent PRACTICAL "how we built X" AI-agent implementation posts from top eng
+# orgs. Longer lookback than news: good implementation write-ups trickle out.
+# --------------------------------------------------------------------------- #
+BLOG_TOP_N = 4               # number of engineering blog posts to feature
+BLOG_PER_RUN = 12            # raw posts pulled each run before ranking
+BLOG_HISTORY_DAYS = 45       # rank posts accumulated over the last N days
+BLOG_HISTORY_FILE = "blog_history.jsonl"  # rolling store under OUTPUT_ROOT
+BLOG_WORDS = 220             # ~words per blog briefing (link-forward, concise)
+BLOG_IMAGES = 0              # blogs stay text/link-forward: no generated diagrams
+
+# Engineering orgs whose blogs we mine for practical AI-agent implementation
+# posts. Grounded search is scoped to these plus "and more".
+BLOG_SOURCES = [
+    "Anthropic", "OpenAI", "Manus", "Netflix", "Uber", "Google",
+    "Google DeepMind", "Microsoft", "AWS", "Meta", "LangChain", "LlamaIndex",
+    "Hugging Face", "NVIDIA", "Databricks", "Pinecone",
+]
 
 # Terms that flag a paper as being about AI agents (cheap pre-filter).
 AGENT_KEYWORDS = [
@@ -95,11 +143,15 @@ IMAGE_STYLE_PREFIX = (
 # --------------------------------------------------------------------------- #
 # Output & guardrails
 # --------------------------------------------------------------------------- #
-OUTPUT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+# Repo-root output/ (one level up from this app/ package) so the rolling
+# news_history.jsonl and prior issues carry over from the pre-agent pipeline.
+OUTPUT_ROOT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output"
+)
 FINAL_HTML_NAME = "top_arxiv_agent_paper_email.html"
 
-# Words that must NEVER appear in any generated artifact.
-BANNED_WORDS = ["Anthropic"]
+# Words that must NEVER appear in any generated artifact. (Empty: no ban.)
+BANNED_WORDS = []
 
 # Lean, image-forward digest: keep the whole issue skimmable (~5000 words total).
 # Papers stay visual-rich (5 diagrams each); text is concise so images carry the
@@ -107,7 +159,7 @@ BANNED_WORDS = ["Anthropic"]
 DIGEST_WORD_BUDGET = 5000       # informational target for the whole issue
 PAPER_WORDS = 1000             # ~words per academic-paper briefing (3 -> ~3000)
 NEWS_WORDS = 450               # ~words per news-topic briefing   (3 -> ~1350)
-QUICK_WORDS = 250              # relaxed target for --quick smoke runs
+QUICK_WORDS = 250              # relaxed target for quick smoke runs
 VERIFY_STATS = True            # grounded second-pass fact-check of paper numbers
 
 # --------------------------------------------------------------------------- #
@@ -116,6 +168,10 @@ VERIFY_STATS = True            # grounded second-pass fact-check of paper number
 MAX_RETRIES = 5                # attempts after the first try for retryable errors
 RETRY_BASE_DELAY = 2.0         # seconds; exponential base (2,4,8,16,...)
 RETRY_MAX_DELAY = 60.0         # cap per backoff wait
+
+# arXiv Atom API specifically: fixed, gentle retry policy (the API throttles hard).
+ARXIV_MAX_RETRIES = 3          # retry a throttled/failed page this many times
+ARXIV_RETRY_DELAY = 5.0        # seconds to wait before each arXiv retry
 
 # --------------------------------------------------------------------------- #
 # Email dispatch (all optional; absence => dry-run to disk)

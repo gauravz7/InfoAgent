@@ -31,7 +31,7 @@ import requests
 from google import genai
 from google.genai import types
 
-import config
+from . import config
 
 
 # =========================================================================== #
@@ -213,6 +213,23 @@ class NewsTopic:
     detected_labs: List[str] = field(default_factory=list)
 
 
+@dataclass
+class BlogPost:
+    """A practical engineering-blog post, shaped to reuse the synth/render path."""
+    org: str
+    url: str
+    summary: str = ""
+    source: str = ""            # publication domain
+    date: str = ""             # YYYY-MM-DD
+    run_id: str = ""
+    why: str = ""              # one-line "why it matters" from the ranker
+    salience: float = 0.0
+    # paper-compatible fields consumed by rendering
+    title: str = ""
+    author_line: str = ""
+    detected_labs: List[str] = field(default_factory=list)
+
+
 # =========================================================================== #
 # Stage 1 -- Fetch (arXiv Atom API, stdlib parser)
 # =========================================================================== #
@@ -264,10 +281,31 @@ def _fetch_page(search_query: str, start: int, page_size: int) -> List[Paper]:
     params = {"search_query": search_query, "start": start, "max_results": page_size,
               "sortBy": "submittedDate", "sortOrder": "descending"}
     url = f"{config.ARXIV_API}?{urllib.parse.urlencode(params)}"
-    resp = requests.get(url, timeout=40, headers={"User-Agent": "arxiv-agent-digest/1.0"})
-    resp.raise_for_status()
-    root = ET.fromstring(resp.text)
-    return [_parse_entry(e) for e in root.findall(f"{_ATOM}entry")]
+    # Per the arXiv API user manual: identify the client, keep page_size <= 2000,
+    # and on 429/503 back off (honoring Retry-After) before retrying.
+    headers = {"User-Agent": "arxiv-agent-digest/1.0 (+https://github.com/gauravz7/InfoAgent)"}
+    # Fixed, gentle policy: try once, then up to ARXIV_MAX_RETRIES more attempts,
+    # waiting ARXIV_RETRY_DELAY seconds before each retry (honoring Retry-After
+    # when the server sends a longer hint).
+    last_exc = None
+    for attempt in range(config.ARXIV_MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, timeout=60, headers=headers)
+            if resp.status_code in (429, 503):
+                last_exc = requests.HTTPError(f"{resp.status_code} rate-limited by arXiv")
+                if attempt < config.ARXIV_MAX_RETRIES:
+                    ra = resp.headers.get("Retry-After", "")
+                    wait = max(float(ra), config.ARXIV_RETRY_DELAY) if ra.isdigit() else config.ARXIV_RETRY_DELAY
+                    time.sleep(wait)
+                continue
+            resp.raise_for_status()
+            root = ET.fromstring(resp.text)
+            return [_parse_entry(e) for e in root.findall(f"{_ATOM}entry")]
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < config.ARXIV_MAX_RETRIES:
+                time.sleep(config.ARXIV_RETRY_DELAY)
+    raise last_exc or requests.HTTPError("arXiv fetch failed")
 
 
 def is_agent_relevant(paper: Paper) -> bool:
@@ -275,8 +313,90 @@ def is_agent_relevant(paper: Paper) -> bool:
     return any(kw in hay for kw in config.AGENT_KEYWORDS)
 
 
-def fetch_candidates(days: int = None, max_candidates: int = None, verbose: bool = True) -> List[Paper]:
-    """Recent, de-duplicated, agent-relevant papers within the lookback window."""
+def _norm_title(t: str) -> str:
+    """Normalize a title for fuzzy de-duplication across sources."""
+    return re.sub(r"[^a-z0-9]+", " ", (t or "").lower()).strip()
+
+
+def fetch_trending_papers(days: int = None, n: int = None, verbose: bool = True) -> List[Paper]:
+    """Grounded-search the most TALKED-ABOUT recent AI research papers.
+
+    Complements the arXiv category mining with papers trending over the last N
+    days (social buzz, press, leaderboards). Uses Google Search grounding, NOT the
+    arXiv Atom API, so the candidate pool stays populated even when arXiv is
+    rate-limiting or down. Results are shaped into ``Paper`` objects (the grounded
+    summary serves as the abstract; the later grounded verify pass enriches it).
+    """
+    n = n or config.TRENDING_PER_RUN
+    days = days or config.WINDOW_DAYS
+    tool = types.Tool(google_search=types.GoogleSearch())
+    prompt = (
+        f"Search the web for the {n} most TRENDING / most-discussed ARTIFICIAL "
+        f"INTELLIGENCE research papers from the LAST {days} DAYS — papers getting "
+        "significant attention on X/Twitter, Hacker News, Reddit r/MachineLearning, "
+        "AI newsletters and press. Favor work on AI AGENTS, LLMs, reasoning, tool "
+        "use and multi-agent systems, but include any genuinely major AI paper. "
+        "Prefer papers that have an arXiv ID. For each give: the exact title; the "
+        "arXiv id (e.g. 2506.12345) if one exists, else an empty string; up to 8 "
+        "author names; the primary arXiv category if known (e.g. cs.AI); the "
+        "publication DATE in YYYY-MM-DD; a 2-4 sentence factual ABSTRACT of what "
+        "the paper does and its headline result; and a one-line reason it is "
+        "trending.\n\n"
+        'Return STRICT JSON: array of {"title":str,"arxiv_id":str,"authors":[str],'
+        '"category":str,"date":str,"abstract":str,"why":str}.'
+    )
+    try:
+        resp = _api(lambda: get_client().models.generate_content(
+            model=config.TEXT_MODEL, contents=prompt,
+            config=types.GenerateContentConfig(tools=[tool], temperature=0.3)),
+            label="trending-search", search=True)
+        items = _loads(resp.text or "")
+    except Exception as exc:  # noqa: BLE001
+        if verbose:
+            print(f"  [trending] grounded fetch failed ({exc})")
+        items = []
+
+    papers = []
+    for it in (items or []):
+        if not isinstance(it, dict) or not str(it.get("title", "")).strip():
+            continue
+        aid = re.sub(r"^arxiv:\s*", "", str(it.get("arxiv_id", "")).strip(),
+                     flags=re.IGNORECASE).strip()
+        # keep only a plausible arXiv id (e.g. 2506.12345); drop junk
+        if aid and not re.match(r"^\d{4}\.\d{4,5}(v\d+)?$", aid):
+            aid = ""
+        abs_url = f"https://arxiv.org/abs/{aid}" if aid else ""
+        pdf_url = f"https://arxiv.org/pdf/{aid}" if aid else ""
+        authors = [str(a).strip() for a in (it.get("authors") or []) if str(a).strip()]
+        date = str(it.get("date", "")).strip()[:10]
+        papers.append(Paper(
+            arxiv_id=aid or f"trending:{_norm_title(it['title'])[:48]}",
+            title=str(it.get("title", "")).strip(),
+            authors=authors, affiliations=[],
+            abstract=str(it.get("abstract", "")).strip(),
+            published=date, updated=date,
+            pdf_url=pdf_url, abs_url=abs_url,
+            primary_category=str(it.get("category", "")).strip() or "cs.AI",
+            comment=("trending: " + str(it.get("why", "")).strip())[:300],
+        ))
+    if verbose:
+        n_id = sum(1 for p in papers if not p.arxiv_id.startswith("trending:"))
+        print(f"  [trending] fetched {len(papers)} trending papers "
+              f"({n_id} with arXiv IDs)")
+    return papers
+
+
+def fetch_candidates(days: int = None, max_candidates: int = None,
+                     include_trending: bool = True, verbose: bool = True) -> List[Paper]:
+    """Recent, de-duplicated candidate papers within the lookback window.
+
+    Two complementary sources, merged and de-duplicated (by arXiv id, then title):
+      1. arXiv Atom API category mining (cs.AI/CL/MA/SE), filtered to agent-relevant.
+      2. (``include_trending``) grounded-search "top trending papers" of the last N
+         days. The arXiv fetch is best-effort: if the API errors out (e.g. a 429
+         rate-limit) the run continues on the trending source alone rather than
+         aborting.
+    """
     days = days or config.WINDOW_DAYS
     max_candidates = max_candidates or config.MAX_CANDIDATES
     cutoff = _dt.date.today() - _dt.timedelta(days=days)
@@ -287,11 +407,11 @@ def fetch_candidates(days: int = None, max_candidates: int = None, verbose: bool
     while len(collected) < max_candidates and start < 2000:
         try:
             page = _fetch_page(search_query, start, page_size)
-        except Exception as exc:  # noqa: BLE001 - one polite retry
+        except Exception as exc:  # noqa: BLE001 - retries exhausted; fall back to trending
             if verbose:
-                print(f"  [fetch] retry after error: {exc}")
-            time.sleep(3)
-            page = _fetch_page(search_query, start, page_size)
+                print(f"  [fetch] arXiv unavailable after retries ({exc}); "
+                      "continuing with trending papers only")
+            break
         if not page:
             break
 
@@ -308,13 +428,30 @@ def fetch_candidates(days: int = None, max_candidates: int = None, verbose: bool
         start += page_size
         if all_old:  # whole page older than cutoff -> stop paging
             break
-        time.sleep(1.0)
+        time.sleep(3.0)  # arXiv manual: keep >=3s between consecutive calls
 
-    papers = list(collected.values())
     if verbose:
-        print(f"  [fetch] {len(papers)} agent-relevant papers since {cutoff.isoformat()} "
-              f"across {', '.join(config.CATEGORIES)}")
-    return papers
+        print(f"  [fetch] {len(collected)} agent-relevant arXiv papers since "
+              f"{cutoff.isoformat()} across {', '.join(config.CATEGORIES)}")
+
+    # Merge in grounded "trending" papers (dedupe by arXiv id, then by title).
+    if include_trending:
+        seen_titles = {_norm_title(p.title) for p in collected.values()}
+        added = 0
+        for p in fetch_trending_papers(days=days, verbose=verbose):
+            if p.arxiv_id in collected:
+                continue
+            nt = _norm_title(p.title)
+            if nt and nt in seen_titles:
+                continue
+            collected[p.arxiv_id] = p
+            seen_titles.add(nt)
+            added += 1
+        if verbose:
+            print(f"  [fetch] +{added} trending papers merged "
+                  f"-> {len(collected)} total candidates")
+
+    return list(collected.values())
 
 
 # =========================================================================== #
@@ -388,7 +525,7 @@ _SYSTEM = (
     "researcher. You write rigorous yet accessible deep-dives that a smart "
     "practitioner can act on. You explain hard math in plain language, always "
     "pairing every theorem or formula with a 💡 intuition and a 🔍 concrete "
-    "worked example. You use clean Markdown. You NEVER use the word 'Anthropic'."
+    "worked example. You use clean Markdown."
 )
 
 _PAPER_SPEC = """Write a focused, well-structured Markdown briefing of the paper below — aim for
@@ -436,7 +573,7 @@ STRICT STRUCTURE (use these exact headings/emoji markers):
 
 RULES: Be specific and grounded; prefer concrete numbers over vague claims. If a
 figure is not stated in the abstract, give a realistic value and clearly mark it as
-*illustrative*. Clean Markdown only, no outer code fence. Never use 'Anthropic'.
+*illustrative*. Clean Markdown only, no outer code fence.
 """
 
 _NEWS_SPEC = """Write a SHORT Markdown briefing of the recent AI-NEWS topic below (a clustered
@@ -472,7 +609,31 @@ and the % change. If funding was raised, state EXACTLY how much (and valuation/
 round/lead investor if available). Use web search to find the precise numbers; if
 a figure genuinely cannot be found, write "figure not disclosed" rather than being
 vague. Do NOT exceed the word cap. Clean Markdown only, no outer code fence.
-Never use the word 'Anthropic'.
+"""
+
+_BLOG_SPEC = """Write a SHORT Markdown briefing of the ENGINEERING BLOG post below — a recent
+practical "how we built it" write-up on AI agents from a top engineering org.
+About {words} words TOTAL (hard cap {cap}). Tight, concrete and skimmable, aimed
+at an engineer who wants to know whether to read the full post.
+
+STRICT STRUCTURE (exact headings):
+
+# <a punchy headline naming the concrete thing they built or the technique>
+
+## 1. What They Built & Why
+- One short paragraph: the problem, and what they shipped to solve it. Name the
+  org and the concrete system/pattern.
+
+## 2. How It Works (the practical bits)
+- 3-5 bullets on the actual implementation: architecture, tools, models, prompt
+  or orchestration patterns, evals, guardrails. Prefer specifics over generalities.
+
+## 3. Takeaways You Can Apply
+- 2-3 bullets an engineer could reuse in their own agent system.
+
+RULES: Ground everything in the post; use web search to confirm the specifics. Do
+NOT invent numbers the post does not report. Stay under the word cap. Clean
+Markdown only, no outer code fence.
 """
 
 
@@ -523,6 +684,15 @@ def _topic_brief(t: NewsTopic) -> str:
         f"APPEARED ACROSS {t.run_span} PIPELINE RUN(S); SALIENCE {t.salience:.1f}/10\n"
         f"SYNTHESIZED SUMMARY:\n{t.summary}\n\n"
         f"CONTRIBUTING HEADLINES:\n- " + "\n- ".join(t.headlines) + "\n"
+    )
+
+
+def _blog_brief(b: BlogPost) -> str:
+    return (
+        f"POST TITLE: {b.title}\nORG: {b.org}\nSOURCE: {b.source}\n"
+        f"PUBLISHED: {b.date or 'n/a'}\nURL: {b.url}\n"
+        f"WHY IT MATTERS: {b.why or 'n/a'}\n"
+        f"SUMMARY:\n{b.summary}\n"
     )
 
 
@@ -625,6 +795,11 @@ def synthesize_paper(paper: Paper, words: int = None, verbose: bool = True,
 def synthesize_news_topic(topic: NewsTopic, words: int = None, verbose: bool = True) -> str:
     return _synthesize(_NEWS_SPEC, _topic_brief(topic), "TOPIC", topic.topic,
                        words or config.NEWS_WORDS, verbose, grounded=True)
+
+
+def synthesize_blog(blog: BlogPost, words: int = None, verbose: bool = True) -> str:
+    return _synthesize(_BLOG_SPEC, _blog_brief(blog), "BLOG POST", blog.title,
+                       words or config.BLOG_WORDS, verbose, grounded=True)
 
 
 # =========================================================================== #
@@ -897,6 +1072,167 @@ def cluster_topics(days: int = None, top_n: int = None, verbose: bool = True) ->
         for i, t in enumerate(topics, 1):
             print(f"    {i}. {t.topic}  (runs={t.run_span}, salience={t.salience:.1f})")
     return topics
+
+
+# =========================================================================== #
+# Engineering blogs -- grounded fetch -> rolling history -> rank top N over N days
+# =========================================================================== #
+def _blog_history_path() -> str:
+    return os.path.join(config.OUTPUT_ROOT, config.BLOG_HISTORY_FILE)
+
+
+def fetch_engineering_blogs(run_id: str, days: int = None, n: int = None,
+                            verbose: bool = True) -> List[dict]:
+    """Grounded search for recent PRACTICAL AI-agent implementation blog posts."""
+    n = n or config.BLOG_PER_RUN
+    days = days or config.BLOG_HISTORY_DAYS
+    orgs = ", ".join(config.BLOG_SOURCES)
+    tool = types.Tool(google_search=types.GoogleSearch())
+    prompt = (
+        f"Search the web for the {n} best RECENT engineering-blog posts about "
+        "BUILDING AI AGENTS / agentic systems — practical 'how we built it' "
+        "write-ups with real implementation detail (architecture, orchestration, "
+        "tool use, memory, evals, prompts, guardrails, production lessons). Favor "
+        f"posts published in the LAST {days} DAYS; skip anything clearly older. "
+        f"Prioritize the engineering blogs of: {orgs} — and other reputable "
+        "engineering orgs. Exclude marketing pages, model release notes with no "
+        "implementation detail, and pure opinion pieces. For each give: the exact "
+        "post title; the publishing ORG; a 1-2 sentence factual summary of what "
+        "they built and the key technique; the source domain; the DIRECT ARTICLE "
+        "URL (a real https link to the specific post, not a homepage); and the "
+        "publication DATE in YYYY-MM-DD format.\n\n"
+        'Return STRICT JSON: array of {"title":str,"org":str,"summary":str,'
+        '"source":str,"url":str,"date":str}.'
+    )
+    grounding_urls = []
+    try:
+        resp = _api(lambda: get_client().models.generate_content(
+            model=config.TEXT_MODEL, contents=prompt,
+            config=types.GenerateContentConfig(tools=[tool], temperature=0.3)),
+            label="blog-search", search=True)
+        items = _loads(resp.text or "")
+        grounding_urls = _grounding_urls(resp)
+    except Exception as exc:  # noqa: BLE001
+        if verbose:
+            print(f"  [blogs] grounded fetch failed ({exc})")
+        items = []
+    clean = [{"run_id": run_id, "title": str(it.get("title", "")).strip(),
+              "org": str(it.get("org", "")).strip(),
+              "summary": str(it.get("summary", "")).strip(),
+              "source": str(it.get("source", "")).strip(),
+              "url": str(it.get("url", "")).strip(),
+              "date": str(it.get("date", "")).strip()[:10]}
+             for it in (items or []) if isinstance(it, dict) and it.get("title")]
+    # Backfill any missing URL from the real grounding sources, in order.
+    gi = iter(grounding_urls)
+    for c in clean:
+        if not c["url"].startswith("http"):
+            c["url"] = next(gi, "")
+    if verbose:
+        n_url = sum(1 for c in clean if c["url"].startswith("http"))
+        print(f"  [blogs] fetched {len(clean)} posts this run ({n_url} with links)")
+    return clean
+
+
+def append_blog_history(items: List[dict]) -> None:
+    os.makedirs(config.OUTPUT_ROOT, exist_ok=True)
+    with open(_blog_history_path(), "a", encoding="utf-8") as fh:
+        for it in items:
+            fh.write(json.dumps(it, ensure_ascii=False) + "\n")
+
+
+def _load_recent_blog_history(days: int):
+    """Return (items, n_runs) for blog entries whose run_id date is within `days`."""
+    path = _blog_history_path()
+    if not os.path.isfile(path):
+        return [], 0
+    cutoff = _dt.date.today() - _dt.timedelta(days=days)
+    rows = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            try:  # run_id is an ISO timestamp; keep only the last `days` days
+                rid_date = _dt.date.fromisoformat((r.get("run_id") or "")[:10])
+            except ValueError:
+                continue
+            if rid_date >= cutoff:
+                rows.append(r)
+    n_runs = len({r.get("run_id") for r in rows if r.get("run_id")})
+    return rows, n_runs
+
+
+def select_blogs(days: int = None, top_n: int = None, verbose: bool = True) -> List[BlogPost]:
+    """De-duplicate blog posts over the last `days` days and rank the top N."""
+    top_n = top_n or config.BLOG_TOP_N
+    days = days or config.BLOG_HISTORY_DAYS
+    items, n_runs = _load_recent_blog_history(days)
+    if not items:
+        return []
+    # De-duplicate by URL (fallback title), keeping the first-seen entry.
+    seen, unique = set(), []
+    for it in items:
+        key = (it.get("url") or "").strip().lower() or (it.get("title") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(it)
+    compact = [{"i": idx, "title": it.get("title", ""), "org": it.get("org", ""),
+                "summary": it.get("summary", ""), "source": it.get("source", ""),
+                "date": it.get("date", "")} for idx, it in enumerate(unique)]
+    prompt = (
+        "You are an engineering editor curating a digest of PRACTICAL AI-agent "
+        "implementation blog posts. Below are candidate posts (each with an id 'i') "
+        f"collected over the last {days} days ({n_runs} run(s)). Pick the TOP "
+        f"{top_n} that are the most useful to an engineer BUILDING agents — favor "
+        "concrete implementation detail, credible orgs, and recency; drop marketing "
+        "and duplicates. For each pick, write a one-line 'why' (why an agent builder "
+        "should read it) and a salience score 0-10.\n\n"
+        'Return STRICT JSON: array of {"i":int,"why":str,"salience":float}.\n\n'
+        f"POSTS:\n{json.dumps(compact, ensure_ascii=False)}"
+    )
+    try:
+        picks = generate_json(prompt, temperature=0.3, max_output_tokens=2048)
+    except Exception as exc:  # noqa: BLE001
+        if verbose:
+            print(f"  [blogs] ranking failed ({exc})")
+        return []
+
+    blogs = []
+    for p in (picks or [])[:top_n]:
+        try:
+            idx = int(p.get("i"))
+        except (TypeError, ValueError):
+            continue
+        if not (0 <= idx < len(unique)):
+            continue
+        it = unique[idx]
+        b = BlogPost(
+            org=str(it.get("org", "")).strip(),
+            url=str(it.get("url", "")).strip(),
+            summary=str(it.get("summary", "")).strip(),
+            source=str(it.get("source", "")).strip(),
+            date=str(it.get("date", "")).strip()[:10],
+            run_id=str(it.get("run_id", "")).strip(),
+            why=str(p.get("why", "")).strip(),
+            salience=float(p.get("salience", 0.0) or 0.0),
+        )
+        b.title = str(it.get("title", "")).strip()
+        b.author_line = b.org or b.source or "Engineering blog"
+        b.detected_labs = [b.org] if b.org else []
+        blogs.append(b)
+
+    if verbose:
+        print(f"  [blogs] ranked {len(unique)} unique posts from {n_runs} run(s) in "
+              f"last {days}d -> top {len(blogs)}:")
+        for i, b in enumerate(blogs, 1):
+            print(f"    {i}. {b.title[:60]}  ({b.org}, salience={b.salience:.1f})")
+    return blogs
 
 
 # =========================================================================== #

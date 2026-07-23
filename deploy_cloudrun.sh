@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# One-time setup: deploy the digest as a Cloud Run Job triggered Mon/Thu by
+# One-time setup: deploy the digest as a Cloud Run Job triggered DAILY by
 # Cloud Scheduler. Run this from the repo root with gcloud authenticated.
 #
 # Before running, create the GitHub-token secret ONCE (do NOT commit the token):
-#   printf '%s' '<GITHUB_PAT_with_write_to_pages_repo>' \
-#     | gcloud secrets create pages-token --data-file=- --project "$PROJECT"
+#   gh auth token | gcloud secrets create pages-token --data-file=- --project "$PROJECT"
+# (the PAT needs write access to the Pages repo)
 #
 set -euo pipefail
 
@@ -16,6 +16,8 @@ SA_NAME="${SA_NAME:-digest-bot}"
 SA="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 PAGES_REPO="${PAGES_REPO:-gauravz7/gauravz7.github.io}"
 DIGEST_BASE_URL="${DIGEST_BASE_URL:-https://gauravz7.github.io/digest}"
+# Daily at 06:17 UTC (off the top-of-hour to dodge scheduler backlog).
+SCHEDULE="${SCHEDULE:-17 6 * * *}"
 
 gcloud config set project "$PROJECT"
 
@@ -39,17 +41,17 @@ gcloud run jobs deploy "$JOB" \
   --set-secrets "PAGES_TOKEN=pages-token:latest" \
   --max-retries 1 --task-timeout 1800 --memory 1Gi --cpu 1
 
-echo ">> allow the SA to invoke the job, then schedule Mon/Thu 06:00 UTC"
+echo ">> allow the SA to invoke the job, then schedule daily ${SCHEDULE} UTC"
 gcloud run jobs add-iam-policy-binding "$JOB" --region "$REGION" \
   --member "serviceAccount:$SA" --role roles/run.invoker -q
 gcloud scheduler jobs create http "$SCHED" --location "$REGION" \
-  --schedule "0 6 * * 1,4" --time-zone "UTC" \
+  --schedule "$SCHEDULE" --time-zone "UTC" \
   --uri "https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT}/jobs/${JOB}:run" \
   --http-method POST \
   --oauth-service-account-email "$SA" 2>/dev/null \
   || gcloud scheduler jobs update http "$SCHED" --location "$REGION" \
-       --schedule "0 6 * * 1,4" --time-zone "UTC" \
+       --schedule "$SCHEDULE" --time-zone "UTC" \
        --uri "https://${REGION}-run.googleapis.com/apis/run.googleapis.com/v1/namespaces/${PROJECT}/jobs/${JOB}:run" \
        --http-method POST --oauth-service-account-email "$SA"
 
-echo ">> done. Test now with:  gcloud run jobs execute $JOB --region $REGION"
+echo ">> done. Test now with:  gcloud run jobs execute $JOB --region $REGION --wait"

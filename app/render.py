@@ -19,7 +19,7 @@ import os
 import re
 from typing import List
 
-import config
+from . import config
 
 # --------------------------------------------------------------------------- #
 # LaTeX / math -> Unicode
@@ -392,9 +392,11 @@ def _render_group(sections: List[dict], id_prefix: str, tag_word: str) -> str:
 
 
 def build_full_html(title: str, subtitle: str, date_str: str,
-                    paper_sections: List[dict], news_sections: List[dict] = None) -> str:
-    """Assemble the full digest: Top papers + (optional) Top AI-news topics."""
+                    paper_sections: List[dict], news_sections: List[dict] = None,
+                    blog_sections: List[dict] = None) -> str:
+    """Assemble the full digest: Top papers + (optional) AI-news + (optional) blogs."""
     news_sections = news_sections or []
+    blog_sections = blog_sections or []
     toc = "".join(
         f'<li><a href="#paper-{i}">{html.escape(p["title"])}</a></li>'
         for i, p in enumerate(paper_sections, 1)
@@ -402,6 +404,10 @@ def build_full_html(title: str, subtitle: str, date_str: str,
     news_toc = "".join(
         f'<li><a href="#news-{i}">{html.escape(p["title"])}</a></li>'
         for i, p in enumerate(news_sections, 1)
+    )
+    blog_toc = "".join(
+        f'<li><a href="#blog-{i}">{html.escape(p["title"])}</a></li>'
+        for i, p in enumerate(blog_sections, 1)
     )
 
     def _band(kicker: str) -> str:
@@ -419,12 +425,21 @@ def build_full_html(title: str, subtitle: str, date_str: str,
             _band(f"② News Coverage — Top {len(news_sections)} AI stories (last 7 days)")
             + _render_group(news_sections, "news", "AI NEWS")
         )
+    # Subsection 3 — Engineering blogs
+    blog_block = ""
+    if blog_sections:
+        blog_block = (
+            _band(f"③ Engineering — Top {len(blog_sections)} practical AI-agent blogs")
+            + _render_group(blog_sections, "blog", "ENG BLOG")
+        )
 
     toc_html = (
         f'<nav class="toc"><h3>In this issue</h3>'
         f'<div class="toc-label">① Research — {len(paper_sections)} papers</div><ol>{toc}</ol>'
         + (f'<div class="toc-label">② News Coverage — {len(news_sections)} topics</div>'
            f'<ol>{news_toc}</ol>' if news_sections else "")
+        + (f'<div class="toc-label">③ Engineering — {len(blog_sections)} blogs</div>'
+           f'<ol>{blog_toc}</ol>' if blog_sections else "")
         + "</nav>"
     )
 
@@ -440,7 +455,7 @@ def build_full_html(title: str, subtitle: str, date_str: str,
     <div class="meta">{html.escape(subtitle)} &nbsp;·&nbsp; {html.escape(date_str)}</div>
   </header>
   {toc_html}
-  <article>{body}{news_block}</article>
+  <article>{body}{news_block}{blog_block}</article>
   <div class="footer">
     Generated autonomously by the ArXiv AI-Agent Daily Pipeline · Sources: arXiv
     ({', '.join(config.CATEGORIES)}) + grounded AI-news search · Visual Theme:

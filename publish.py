@@ -25,7 +25,7 @@ import re
 import shutil
 from email.utils import format_datetime
 
-import config
+from app import config
 
 FEED_TITLE = "AI-Agent Research Digest"
 FEED_DESC = ("Top AI-agent research papers + the week's AI news — image-forward, "
@@ -164,6 +164,57 @@ def rebuild_index(site: str, base_url: str) -> None:
     print(f"  [publish] index -> digest/index.html ({len(_list_issue_dates(site))} issues)")
 
 
+DIGEST_CARD_START = "<!-- DIGEST-CARD:START -->"
+DIGEST_CARD_END = "<!-- DIGEST-CARD:END -->"
+
+
+def _digest_card_html(date: str, base_url: str) -> str:
+    """A dedicated homepage tile for the live AI Digest: the current issue as the
+    primary link, an explicit 'older digests' archive link, and the generation
+    date. Wrapped in markers so it can be refreshed in place on every run."""
+    return (
+        f'{DIGEST_CARD_START}\n'
+        '        <article class="card">\n'
+        '          <span class="tag">Daily · auto-published</span>\n'
+        f'          <h2><a class="stretch" href="{base_url}/{date}/">AI Digest — {date}</a></h2>\n'
+        '          <p>Today&#x27;s issue — the top AI-agent research papers, the '
+        'week&#x27;s AI news, and practical engineering blogs — freshly generated and '
+        'published. A new digest lands here every day, with older issues archived.</p>\n'
+        f'          <span class="sub">current: <a href="{base_url}/{date}/">{date}</a> '
+        f'· <a href="{base_url}/">older digests</a></span>\n'
+        '          <span class="meta-row"><span class="go">Read the current digest '
+        '<span class="arw">→</span></span></span>\n'
+        '        </article>\n'
+        f'        {DIGEST_CARD_END}'
+    )
+
+
+def update_homepage(site: str, base_url: str, date: str) -> None:
+    """Add/refresh a dedicated AI-Digest card on the site homepage (index.html),
+    pointing at the current issue and stamped with the generation date. Idempotent:
+    the card is marker-wrapped; on the first run it is inserted as the first tile in
+    the projects grid, and rewritten in place on subsequent runs."""
+    path = os.path.join(site, "index.html")
+    if not os.path.isfile(path):
+        print("  [publish] no homepage index.html; skipping tile update")
+        return
+    doc = _read(path)
+    card = _digest_card_html(date, base_url)
+    if DIGEST_CARD_START in doc and DIGEST_CARD_END in doc:
+        doc = re.sub(
+            re.escape(DIGEST_CARD_START) + r".*?" + re.escape(DIGEST_CARD_END),
+            lambda _m: card, doc, count=1, flags=re.S)
+    else:
+        # First run: insert the new card as the first tile right after the grid opens.
+        m = re.search(r'<div class="grid">\s*\n', doc)
+        if not m:
+            print("  [publish] projects grid not found on homepage; skipping tile update")
+            return
+        doc = doc[:m.end()] + "\n        " + card + "\n\n" + doc[m.end():]
+    _write(path, doc)
+    print(f"  [publish] homepage AI-Digest card -> current {date} + archive link")
+
+
 def rebuild_rss(site: str, base_url: str, now: _dt.datetime = None) -> None:
     """Regenerate digest/rss.xml with content:encoded (absolute-image) HTML."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
@@ -220,6 +271,7 @@ def main(argv=None):
     publish_issue(args.output_root, args.date, args.site, base)
     rebuild_index(args.site, base)
     rebuild_rss(args.site, base)
+    update_homepage(args.site, base, args.date)
     print(f"Published {args.date} into {os.path.join(args.site, 'digest')}")
 
 

@@ -3,3 +3,7 @@ output/
 __pycache__/
 *.pyc
 *.eml
+.venv/
+venv/
+archive/
+.google-agents-cli/
