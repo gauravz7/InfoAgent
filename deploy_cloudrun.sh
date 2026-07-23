@@ -8,7 +8,12 @@
 #
 set -euo pipefail
 
-PROJECT="${PROJECT:-vital-octagon-19612}"
+# Project id is not hard-coded: pass PROJECT=... or rely on your active gcloud config.
+PROJECT="${PROJECT:-$(gcloud config get-value project 2>/dev/null)}"
+if [[ -z "$PROJECT" || "$PROJECT" == "(unset)" ]]; then
+  echo "ERROR: no GCP project. Run 'gcloud config set project <id>' or PROJECT=<id> $0" >&2
+  exit 1
+fi
 REGION="${REGION:-us-central1}"
 JOB="${JOB:-digest-job}"
 SCHED="${SCHED:-digest-schedule}"

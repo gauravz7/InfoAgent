@@ -15,9 +15,10 @@ import os
 # --------------------------------------------------------------------------- #
 # Google GenAI / Vertex auth (ADC-based, no API keys in source)
 # --------------------------------------------------------------------------- #
-# Resolve the Vertex project: explicit env wins, else fall back to ADC's project,
-# else the pipeline's historical default. GenAI text/image models run in the
-# `global` location; the deployment/infra region is separate (us-central1).
+# Resolve the Vertex project: explicit env wins, else fall back to ADC's project.
+# No project id is hard-coded here — set GOOGLE_CLOUD_PROJECT (the Cloud Run Job
+# and local dev both provide it, or ADC resolves it). GenAI text/image models run
+# in the `global` location; the deployment/infra region is separate (us-central1).
 GENAI_PROJECT = (
     os.environ.get("GOOGLE_CLOUD_PROJECT")
     or os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID")
@@ -29,7 +30,6 @@ if not GENAI_PROJECT:
         _, GENAI_PROJECT = google.auth.default()
     except Exception:  # noqa: BLE001 - keep import side effects non-fatal
         GENAI_PROJECT = None
-GENAI_PROJECT = GENAI_PROJECT or "vital-octagon-19612"
 
 GENAI_LOCATION = (
     os.environ.get("GOOGLE_CLOUD_LOCATION")
@@ -38,7 +38,8 @@ GENAI_LOCATION = (
 )
 
 # Make the resolved values visible to the ADK / google-genai clients.
-os.environ.setdefault("GOOGLE_CLOUD_PROJECT", GENAI_PROJECT)
+if GENAI_PROJECT:
+    os.environ.setdefault("GOOGLE_CLOUD_PROJECT", GENAI_PROJECT)
 os.environ.setdefault("GOOGLE_CLOUD_LOCATION", GENAI_LOCATION)
 os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "True")
 
