@@ -16,7 +16,9 @@ PAGES_REPO="${PAGES_REPO:-gauravz7/gauravz7.github.io}"
 DIGEST_BASE_URL="${DIGEST_BASE_URL:-https://gauravz7.github.io/digest}"
 
 echo ">> generating issue for ${DATE}"
-python -m app.runner --days 7 --top 3
+# --send emails the issue when SMTP_* env is present; without it, dispatch is a
+# harmless dry-run (writes digest.eml, sends nothing).
+python -m app.runner --days 7 --top 3 --send
 
 echo ">> cloning Pages repo"
 # Auth via GIT_ASKPASS so the token is NEVER placed in the remote URL (git would

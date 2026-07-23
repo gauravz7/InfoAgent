@@ -33,12 +33,30 @@ gcloud projects add-iam-policy-binding "$PROJECT" \
 gcloud secrets add-iam-policy-binding pages-token \
   --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor -q
 
+# Optional SMTP email dispatch. To enable, export these before running deploy and
+# create the password secret once:
+#   export SMTP_HOST=smtp.gmail.com SMTP_PORT=587 SMTP_USER=you@gmail.com \
+#          EMAIL_FROM=you@gmail.com EMAIL_TO="a@x.com,b@y.com"   # EMAIL_TO may be a list
+#   printf '%s' '<smtp-app-password>' | gcloud secrets create smtp-pass --data-file=- --project "$PROJECT"
+#   gcloud secrets add-iam-policy-binding smtp-pass \
+#     --member "serviceAccount:$SA" --role roles/secretmanager.secretAccessor -q
+# Env vars use a custom '##' delimiter so a comma-separated EMAIL_TO is preserved.
+ENV_VARS="GOOGLE_CLOUD_PROJECT=$PROJECT##GOOGLE_CLOUD_LOCATION=global##PAGES_REPO=$PAGES_REPO##DIGEST_BASE_URL=$DIGEST_BASE_URL"
+SECRETS="PAGES_TOKEN=pages-token:latest"
+if [[ -n "${SMTP_HOST:-}" ]]; then
+  ENV_VARS="$ENV_VARS##SMTP_HOST=$SMTP_HOST##SMTP_PORT=${SMTP_PORT:-587}##SMTP_USER=$SMTP_USER##EMAIL_FROM=$EMAIL_FROM##EMAIL_TO=$EMAIL_TO"
+  SECRETS="$SECRETS,SMTP_PASS=smtp-pass:latest"
+  echo ">> SMTP email ENABLED (to: $EMAIL_TO)"
+else
+  echo ">> SMTP email disabled (export SMTP_HOST/... to enable); job will dry-run dispatch"
+fi
+
 echo ">> build + deploy the Cloud Run Job (Cloud Build builds the image)"
 gcloud run jobs deploy "$JOB" \
   --source . --region "$REGION" \
   --service-account "$SA" \
-  --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT,GOOGLE_CLOUD_LOCATION=global,PAGES_REPO=$PAGES_REPO,DIGEST_BASE_URL=$DIGEST_BASE_URL" \
-  --set-secrets "PAGES_TOKEN=pages-token:latest" \
+  --set-env-vars "^##^$ENV_VARS" \
+  --set-secrets "$SECRETS" \
   --max-retries 1 --task-timeout 1800 --memory 1Gi --cpu 1
 
 echo ">> allow the SA to invoke the job, then schedule daily ${SCHEDULE} UTC"

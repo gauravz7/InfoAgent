@@ -1268,10 +1268,11 @@ def dispatch(html_doc: str, subject: str, out_dir: str, images_dir: str,
         print(f"  [dispatch] wrote {html_path}")
 
     email_html, attachments = _inline_images(html_doc, images_dir)
+    recipients = config.smtp_recipients()
     msg = MIMEMultipart("related")
     msg["Subject"] = subject
     msg["From"] = config.SMTP["sender"] or "arxiv-digest@localhost"
-    msg["To"] = config.SMTP["to"] or "you@example.com"
+    msg["To"] = ", ".join(recipients) or "you@example.com"
     alt = MIMEMultipart("alternative")
     alt.attach(MIMEText("This digest is best viewed as HTML.", "plain"))
     alt.attach(MIMEText(email_html, "html"))
@@ -1294,7 +1295,7 @@ def dispatch(html_doc: str, subject: str, out_dir: str, images_dir: str,
     with smtplib.SMTP(config.SMTP["host"], config.SMTP["port"]) as server:
         server.starttls()
         server.login(config.SMTP["user"], config.SMTP["password"])
-        server.sendmail(config.SMTP["sender"], [config.SMTP["to"]], msg.as_string())
+        server.sendmail(config.SMTP["sender"], recipients, msg.as_string())
     if verbose:
-        print(f"  [dispatch] emailed digest to {config.SMTP['to']}")
+        print(f"  [dispatch] emailed digest to {', '.join(recipients)}")
     return {"sent": True, "html_path": html_path, "eml_path": eml_path}

@@ -188,3 +188,10 @@ SMTP = {
 
 def smtp_configured() -> bool:
     return all([SMTP["host"], SMTP["user"], SMTP["password"], SMTP["to"], SMTP["sender"]])
+
+
+def smtp_recipients() -> list:
+    """EMAIL_TO parsed into a recipient list (comma / semicolon / space separated),
+    so the digest can be sent to more than one address."""
+    import re
+    return [a.strip() for a in re.split(r"[,;\s]+", SMTP["to"] or "") if a.strip()]
