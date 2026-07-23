@@ -26,6 +26,7 @@ import shutil
 from email.utils import format_datetime
 
 from app import config
+from app.render import DISCLAIMER_TEXT
 
 FEED_TITLE = "AI-Agent Research Digest"
 FEED_DESC = ("Top AI-agent research papers + the week's AI news — image-forward, "
@@ -155,6 +156,8 @@ def rebuild_index(site: str, base_url: str) -> None:
   </ul>
 
   <footer>
+    <p style="margin:0 0 .8rem"><strong>⚠️ AI-generated content.</strong>
+      {_html.escape(DISCLAIMER_TEXT)}</p>
     <a href="https://gauravz7.github.io/">← gauravz7</a> ·
     <a href="https://github.com/gauravz7/InfoAgent">source</a> ·
     <a href="{base_url}/rss.xml">RSS</a>
@@ -175,11 +178,12 @@ def _digest_card_html(date: str, base_url: str) -> str:
     return (
         f'{DIGEST_CARD_START}\n'
         '        <article class="card">\n'
-        '          <span class="tag">Daily · auto-published</span>\n'
+        '          <span class="tag">Daily · AI-generated · auto-published</span>\n'
         f'          <h2><a class="stretch" href="{base_url}/{date}/">AI Digest — {date}</a></h2>\n'
         '          <p>Today&#x27;s issue — the top AI-agent research papers, the '
         'week&#x27;s AI news, and practical engineering blogs — freshly generated and '
-        'published. A new digest lands here every day, with older issues archived.</p>\n'
+        'published. A new digest lands here every day, with older issues archived. '
+        '<em>All text and images are AI-generated and may contain mistakes.</em></p>\n'
         f'          <span class="sub">current: <a href="{base_url}/{date}/">{date}</a> '
         f'· <a href="{base_url}/">older digests</a></span>\n'
         '          <span class="meta-row"><span class="go">Read the current digest '

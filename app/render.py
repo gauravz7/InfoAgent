@@ -21,6 +21,13 @@ from typing import List
 
 from . import config
 
+# Shown on every published digest: all text and imagery here is AI-generated.
+DISCLAIMER_TEXT = (
+    "Every line of text and every image in this digest is AI-generated. "
+    "AI can make mistakes — treat all content as a starting point and verify "
+    "important details against the linked primary sources before relying on them."
+)
+
 # --------------------------------------------------------------------------- #
 # LaTeX / math -> Unicode
 # --------------------------------------------------------------------------- #
@@ -372,6 +379,10 @@ def _css() -> str:
     figure.diagram figcaption {{ color:var(--text-soft); font-size:13.5px; margin-top:8px; font-style:italic; }}
     .math {{ font-family:'Cambria Math','Latin Modern Math',Georgia,serif; font-size:1.03em; white-space:nowrap; }}
     hr {{ border:none; border-top:1px solid var(--rule); margin:1.6em 0; }}
+    .disclaimer {{ margin:20px 0 8px; padding:12px 16px; border:1px solid var(--accent);
+      border-left:4px solid var(--accent); border-radius:6px; background:#FCEFF5;
+      color:var(--text); font-size:13.5px; line-height:1.55; }}
+    .disclaimer strong {{ color:var(--accent); }}
     .footer {{ margin-top:56px; padding-top:20px; border-top:3px solid var(--accent);
       color:var(--text-soft); font-size:13px; }}
     """
@@ -454,9 +465,13 @@ def build_full_html(title: str, subtitle: str, date_str: str,
     <h1>{html.escape(title)}</h1>
     <div class="meta">{html.escape(subtitle)} &nbsp;·&nbsp; {html.escape(date_str)}</div>
   </header>
+  <div class="disclaimer" role="note">
+    <strong>⚠️ AI-generated:</strong> {html.escape(DISCLAIMER_TEXT)}
+  </div>
   {toc_html}
   <article>{body}{news_block}{blog_block}</article>
   <div class="footer">
+    <strong>⚠️ AI-generated content.</strong> {html.escape(DISCLAIMER_TEXT)}<br>
     Generated autonomously by the ArXiv AI-Agent Daily Pipeline · Sources: arXiv
     ({', '.join(config.CATEGORIES)}) + grounded AI-news search · Visual Theme:
     Minimalist Plain White Background (#FFFFFF).
