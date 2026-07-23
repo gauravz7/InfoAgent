@@ -471,7 +471,6 @@ def build_full_html(title: str, subtitle: str, date_str: str,
   {toc_html}
   <article>{body}{news_block}{blog_block}</article>
   <div class="footer">
-    <strong>⚠️ AI-generated content.</strong> {html.escape(DISCLAIMER_TEXT)}<br>
     Generated autonomously by the ArXiv AI-Agent Daily Pipeline · Sources: arXiv
     ({', '.join(config.CATEGORIES)}) + grounded AI-news search · Visual Theme:
     Minimalist Plain White Background (#FFFFFF).

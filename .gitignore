@@ -8,3 +8,6 @@ output/
 # archived ADK agent / eval / tests and CLI runtime artifacts (kept on disk only)
 archive/
 .google-agents-cli/
+
+# local coding-agent guide (not published)
+CLAUDE.md
