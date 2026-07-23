@@ -19,8 +19,21 @@ echo ">> generating issue for ${DATE}"
 python -m app.runner --days 7 --top 3
 
 echo ">> cloning Pages repo"
-# token used only at runtime inside the container (never echoed)
-git clone --depth 1 "https://x-access-token:${PAGES_TOKEN}@github.com/${PAGES_REPO}.git" /tmp/site
+# Auth via GIT_ASKPASS so the token is NEVER placed in the remote URL (git would
+# otherwise echo it verbatim into error output). Strip any stray whitespace/newline
+# from the secret value defensively.
+export PAGES_TOKEN="$(printf '%s' "${PAGES_TOKEN}" | tr -d '[:space:]')"
+ASKPASS="$(mktemp)"
+cat > "$ASKPASS" <<'EOS'
+#!/usr/bin/env bash
+case "$1" in
+  Username*) printf '%s' "x-access-token" ;;
+  Password*) printf '%s' "${PAGES_TOKEN}" ;;
+esac
+EOS
+chmod +x "$ASKPASS"
+export GIT_ASKPASS="$ASKPASS"
+git clone --depth 1 "https://github.com/${PAGES_REPO}.git" /tmp/site
 
 echo ">> publishing"
 python publish.py --date "${DATE}" --site /tmp/site --base-url "${DIGEST_BASE_URL}"
