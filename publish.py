@@ -26,7 +26,7 @@ import shutil
 from email.utils import format_datetime
 
 from app import config
-from app.render import DISCLAIMER_TEXT, MAILERLITE_UNIVERSAL
+from app.render import DISCLAIMER_TEXT, MAILERLITE_UNIVERSAL, MAILERLITE_AUTOPOPUP
 
 FEED_TITLE = "AI-Agent Research Digest"
 FEED_DESC = ("Top AI-agent research papers + the week's AI news — image-forward, "
@@ -169,7 +169,9 @@ def rebuild_index(site: str, base_url: str) -> None:
     <a href="https://github.com/gauravz7/InfoAgent">source</a> ·
     <a href="{base_url}/rss.xml">RSS</a>
   </footer>
-</div></body></html>"""
+</div>
+{MAILERLITE_AUTOPOPUP}
+</body></html>"""
     _write(os.path.join(site, "digest", "index.html"), page)
     print(f"  [publish] index -> digest/index.html ({len(_list_issue_dates(site))} issues)")
 

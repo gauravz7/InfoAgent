@@ -51,6 +51,23 @@ MAILERLITE_SUBSCRIBE_CTA = (
     '</span></div>'
 )
 
+# Auto-open the signup pop-up on page load: a few seconds in, once per browser
+# session (sessionStorage guard) so repeat readers aren't nagged. The button above
+# stays as a manual fallback. Plain (non-f) string — its braces are literal JS.
+MAILERLITE_AUTOPOPUP = """<!-- MailerLite auto-open signup -->
+<script>
+  window.addEventListener('load', function () {
+    try {
+      if (!sessionStorage.getItem('ml_digest_shown')) {
+        setTimeout(function () {
+          if (window.ml) { ml('show', 'mbMpBz', true); }
+          sessionStorage.setItem('ml_digest_shown', '1');
+        }, 3500);
+      }
+    } catch (e) {}
+  });
+</script>"""
+
 # --------------------------------------------------------------------------- #
 # LaTeX / math -> Unicode
 # --------------------------------------------------------------------------- #
@@ -507,7 +524,9 @@ def build_full_html(title: str, subtitle: str, date_str: str,
     ({', '.join(config.CATEGORIES)}) + grounded AI-news search · Visual Theme:
     Minimalist Plain White Background (#FFFFFF).
   </div>
-</div></body></html>"""
+</div>
+{MAILERLITE_AUTOPOPUP}
+</body></html>"""
 
 
 # --------------------------------------------------------------------------- #
