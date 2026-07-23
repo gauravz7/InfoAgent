@@ -465,11 +465,11 @@ def build_full_html(title: str, subtitle: str, date_str: str,
     <h1>{html.escape(title)}</h1>
     <div class="meta">{html.escape(subtitle)} &nbsp;·&nbsp; {html.escape(date_str)}</div>
   </header>
+  {toc_html}
+  <article>{body}{news_block}{blog_block}</article>
   <div class="disclaimer" role="note">
     <strong>⚠️ AI-generated:</strong> {html.escape(DISCLAIMER_TEXT)}
   </div>
-  {toc_html}
-  <article>{body}{news_block}{blog_block}</article>
   <div class="footer">
     Generated autonomously by the ArXiv AI-Agent Daily Pipeline · Sources: arXiv
     ({', '.join(config.CATEGORIES)}) + grounded AI-news search · Visual Theme:
