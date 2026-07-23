@@ -42,6 +42,15 @@ MAILERLITE_UNIVERSAL = """<!-- MailerLite Universal -->
 </script>
 <!-- End MailerLite Universal -->"""
 
+# Visible subscribe call-to-action shown on every issue page. Opens the MailerLite
+# on-click pop-up form (mbMpBz). No braces here, so it is f-string-safe inline.
+MAILERLITE_SUBSCRIBE_CTA = (
+    '<div class="subscribe-cta"><span class="ml-onclick-form">'
+    '<button type="button" onclick="ml(\'show\', \'mbMpBz\', true)">'
+    '📬 Get this daily digest in your inbox — Subscribe free</button>'
+    '</span></div>'
+)
+
 # --------------------------------------------------------------------------- #
 # LaTeX / math -> Unicode
 # --------------------------------------------------------------------------- #
@@ -397,6 +406,11 @@ def _css() -> str:
       border-left:4px solid var(--accent); border-radius:6px; background:#FCEFF5;
       color:var(--text); font-size:13.5px; line-height:1.55; }}
     .disclaimer strong {{ color:var(--accent); }}
+    .subscribe-cta {{ margin:22px 0; text-align:center; }}
+    .subscribe-cta button, .ml-onclick-form button {{ background:var(--accent); color:#fff;
+      border:0; border-radius:8px; padding:12px 22px; font-size:15px; font-weight:700;
+      cursor:pointer; font-family:inherit; }}
+    .subscribe-cta button:hover, .ml-onclick-form button:hover {{ opacity:.9; }}
     .footer {{ margin-top:56px; padding-top:20px; border-top:3px solid var(--accent);
       color:var(--text-soft); font-size:13px; }}
     """
@@ -481,8 +495,10 @@ def build_full_html(title: str, subtitle: str, date_str: str,
     <h1>{html.escape(title)}</h1>
     <div class="meta">{html.escape(subtitle)} &nbsp;·&nbsp; {html.escape(date_str)}</div>
   </header>
+  {MAILERLITE_SUBSCRIBE_CTA}
   {toc_html}
   <article>{body}{news_block}{blog_block}</article>
+  {MAILERLITE_SUBSCRIBE_CTA}
   <div class="disclaimer" role="note">
     <strong>⚠️ AI-generated:</strong> {html.escape(DISCLAIMER_TEXT)}
   </div>
