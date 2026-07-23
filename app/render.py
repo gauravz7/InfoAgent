@@ -28,6 +28,20 @@ DISCLAIMER_TEXT = (
     "important details against the linked primary sources before relying on them."
 )
 
+# MailerLite Universal snippet — belongs right before </head> on every page so the
+# signup form/pop-up (ml('show', ...)) works. Plain (non-f) string: its braces are
+# literal JS and must NOT be touched by f-string formatting.
+MAILERLITE_ACCOUNT = "2523453"
+MAILERLITE_UNIVERSAL = """<!-- MailerLite Universal -->
+<script>
+    (function(w,d,e,u,f,l,n){w[f]=w[f]||function(){(w[f].q=w[f].q||[])
+    .push(arguments);},l=d.createElement(e),l.async=1,l.src=u,
+    n=d.getElementsByTagName(e)[0],n.parentNode.insertBefore(l,n);})
+    (window,document,'script','https://assets.mailerlite.com/js/universal.js','ml');
+    ml('account', '2523453');
+</script>
+<!-- End MailerLite Universal -->"""
+
 # --------------------------------------------------------------------------- #
 # LaTeX / math -> Unicode
 # --------------------------------------------------------------------------- #
@@ -458,7 +472,9 @@ def build_full_html(title: str, subtitle: str, date_str: str,
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title>
-<style>{_css()}</style></head>
+<style>{_css()}</style>
+{MAILERLITE_UNIVERSAL}
+</head>
 <body><div class="wrap">
   <header class="masthead">
     <div class="kicker">ArXiv AI-Agent Research Digest</div>

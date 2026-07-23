@@ -26,7 +26,7 @@ import shutil
 from email.utils import format_datetime
 
 from app import config
-from app.render import DISCLAIMER_TEXT
+from app.render import DISCLAIMER_TEXT, MAILERLITE_UNIVERSAL
 
 FEED_TITLE = "AI-Agent Research Digest"
 FEED_DESC = ("Top AI-agent research papers + the week's AI news — image-forward, "
@@ -136,18 +136,25 @@ def rebuild_index(site: str, base_url: str) -> None:
   footer{{margin-top:3rem;padding-top:1.2rem;border-top:3px solid {t['accent']};
     color:{t['text_soft']};font-size:.85rem}}
   footer a{{color:{t['accent']};text-decoration:none}}
-</style></head>
+  .ml-onclick-form button{{background:{t['accent']};color:#fff;border:0;border-radius:8px;
+    padding:.7rem 1.4rem;font-size:1rem;font-weight:700;cursor:pointer}}
+  .ml-onclick-form button:hover{{opacity:.9}}
+</style>
+{MAILERLITE_UNIVERSAL}
+</head>
 <body><div class="wrap">
   <div class="kicker">Newsletter</div>
   <h1>{FEED_TITLE}</h1>
   <p class="lede">{_html.escape(FEED_DESC)}</p>
 
   <div class="sub">
-    <h3>Subscribe — delivered Mondays &amp; Thursdays</h3>
-    <!-- MAILERLITE FORM: paste your MailerLite embedded-form snippet here -->
-    <p style="margin:.2em 0;color:{t['text_soft']};font-size:.9rem">
-      Signup form goes here (MailerLite embed).</p>
-    <p class="rss">Or subscribe by feed: <a href="{base_url}/rss.xml">RSS</a></p>
+    <h3>Subscribe — a fresh AI-agent research digest, delivered daily</h3>
+    <p style="margin:.2em 0 .9rem;color:{t['text_soft']};font-size:.9rem">
+      Top arXiv AI-agent papers + the week's AI news, summarized to your inbox.</p>
+    <span class="ml-onclick-form">
+      <button onclick="ml('show', 'mbMpBz', true)">Subscribe free →</button>
+    </span>
+    <p class="rss" style="margin-top:.9rem">Or subscribe by feed: <a href="{base_url}/rss.xml">RSS</a></p>
   </div>
 
   <p class="kicker" style="font-size:11px">Archive</p>
