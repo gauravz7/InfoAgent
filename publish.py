@@ -26,7 +26,8 @@ import shutil
 from email.utils import format_datetime
 
 from app import config
-from app.render import DISCLAIMER_TEXT, MAILERLITE_UNIVERSAL, MAILERLITE_AUTOPOPUP
+from app.render import (DISCLAIMER_TEXT, MAILERLITE_UNIVERSAL,
+                        MAILERLITE_EMBED)
 
 FEED_TITLE = "AI-Agent Research Digest"
 FEED_DESC = ("Top AI-agent research papers + the week's AI news — image-forward, "
@@ -151,9 +152,7 @@ def rebuild_index(site: str, base_url: str) -> None:
     <h3>Subscribe — a fresh AI-agent research digest, delivered daily</h3>
     <p style="margin:.2em 0 .9rem;color:{t['text_soft']};font-size:.9rem">
       Top arXiv AI-agent papers + the week's AI news, summarized to your inbox.</p>
-    <span class="ml-onclick-form">
-      <button onclick="ml('show', 'mbMpBz', true)">Subscribe free →</button>
-    </span>
+    {MAILERLITE_EMBED}
     <p class="rss" style="margin-top:.9rem">Or subscribe by feed: <a href="{base_url}/rss.xml">RSS</a></p>
   </div>
 
@@ -170,7 +169,6 @@ def rebuild_index(site: str, base_url: str) -> None:
     <a href="{base_url}/rss.xml">RSS</a>
   </footer>
 </div>
-{MAILERLITE_AUTOPOPUP}
 </body></html>"""
     _write(os.path.join(site, "digest", "index.html"), page)
     print(f"  [publish] index -> digest/index.html ({len(_list_issue_dates(site))} issues)")

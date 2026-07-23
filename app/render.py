@@ -42,31 +42,21 @@ MAILERLITE_UNIVERSAL = """<!-- MailerLite Universal -->
 </script>
 <!-- End MailerLite Universal -->"""
 
-# Visible subscribe call-to-action shown on every issue page. Opens the MailerLite
-# on-click pop-up form (mbMpBz). No braces here, so it is f-string-safe inline.
+# Visible subscribe call-to-action shown near the top of every issue page. Links
+# down to the embedded signup form (#signup) at the end of the page.
 MAILERLITE_SUBSCRIBE_CTA = (
-    '<div class="subscribe-cta"><span class="ml-onclick-form">'
-    '<button type="button" onclick="ml(\'show\', \'mbMpBz\', true)">'
-    '📬 Get this daily digest in your inbox — Subscribe free</button>'
-    '</span></div>'
+    '<div class="subscribe-cta">'
+    '<a class="subscribe-link" href="#signup">'
+    '📬 Get this daily digest in your inbox — Subscribe free</a>'
+    '</div>'
 )
 
-# Auto-open the signup pop-up on page load: a few seconds in, once per browser
-# session (sessionStorage guard) so repeat readers aren't nagged. The button above
-# stays as a manual fallback. Plain (non-f) string — its braces are literal JS.
-MAILERLITE_AUTOPOPUP = """<!-- MailerLite auto-open signup -->
-<script>
-  window.addEventListener('load', function () {
-    try {
-      if (!sessionStorage.getItem('ml_digest_shown')) {
-        setTimeout(function () {
-          if (window.ml) { ml('show', 'mbMpBz', true); }
-          sessionStorage.setItem('ml_digest_shown', '1');
-        }, 3500);
-      }
-    } catch (e) {}
-  });
-</script>"""
+# Inline embedded signup form (renders in-page via universal.js; no popup). Lives
+# at the end of the page under id="signup" so the top CTA can jump to it.
+MAILERLITE_EMBED = (
+    '<div id="signup" class="subscribe-embed">'
+    '<div class="ml-embedded" data-form="xs3Yrq"></div></div>'
+)
 
 # --------------------------------------------------------------------------- #
 # LaTeX / math -> Unicode
@@ -424,10 +414,13 @@ def _css() -> str:
       color:var(--text); font-size:13.5px; line-height:1.55; }}
     .disclaimer strong {{ color:var(--accent); }}
     .subscribe-cta {{ margin:22px 0; text-align:center; }}
-    .subscribe-cta button, .ml-onclick-form button {{ background:var(--accent); color:#fff;
-      border:0; border-radius:8px; padding:12px 22px; font-size:15px; font-weight:700;
+    .subscribe-embed {{ margin:64px 0 24px; padding-top:16px;
+      border-top:1px solid var(--rule); scroll-margin-top:24px; }}
+    .subscribe-cta a.subscribe-link, .ml-onclick-form button {{ display:inline-block;
+      background:var(--accent); color:#fff; text-decoration:none; border:0;
+      border-radius:8px; padding:12px 22px; font-size:15px; font-weight:700;
       cursor:pointer; font-family:inherit; }}
-    .subscribe-cta button:hover, .ml-onclick-form button:hover {{ opacity:.9; }}
+    .subscribe-cta a.subscribe-link:hover, .ml-onclick-form button:hover {{ opacity:.9; }}
     .footer {{ margin-top:56px; padding-top:20px; border-top:3px solid var(--accent);
       color:var(--text-soft); font-size:13px; }}
     """
@@ -515,7 +508,7 @@ def build_full_html(title: str, subtitle: str, date_str: str,
   {MAILERLITE_SUBSCRIBE_CTA}
   {toc_html}
   <article>{body}{news_block}{blog_block}</article>
-  {MAILERLITE_SUBSCRIBE_CTA}
+  {MAILERLITE_EMBED}
   <div class="disclaimer" role="note">
     <strong>⚠️ AI-generated:</strong> {html.escape(DISCLAIMER_TEXT)}
   </div>
@@ -525,7 +518,6 @@ def build_full_html(title: str, subtitle: str, date_str: str,
     Minimalist Plain White Background (#FFFFFF).
   </div>
 </div>
-{MAILERLITE_AUTOPOPUP}
 </body></html>"""
 
 
