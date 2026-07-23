@@ -1,113 +1,124 @@
-# ArXiv AI-Agent Research Digest — Autonomous Pipeline
+# ArXiv AI-Agent Research Digest
 
-An autonomous agent that mines fresh **AI-agent research** from arXiv, picks the
-**top 3 papers** (favouring top labs), writes a concise, **image-forward** briefing
-of each, then tracks the **top 3 recent AI-news topics** and assembles everything
-into a single HTML digest (web page + email). Designed to run on a schedule and
-publish a newsletter.
+An autonomous daily pipeline that mines fresh **AI-agent research** and assembles a
+single, image-forward HTML digest published to the web. Each issue has three bands:
 
-- **Auth:** Google ADC (Vertex) — no API keys in source.
-- **Models:** `gemini-3.1-flash-lite` (text + grounded search) and
+1. **Research** — the top arXiv AI-agent papers (last 7 days), each a ~1,000-word
+   briefing with 5 generated diagrams, a results table, and grounded fact-checking.
+2. **News Coverage** — the week's top AI-news topics, clustered over a rolling
+   history, each substantiated with hard before→after numbers and real citations.
+3. **Engineering Blogs** — recent practical "how we built it" AI-agent posts from
+   top engineering orgs, LLM-ranked and link-forward.
+
+It runs itself on GCP every day and publishes to **https://gauravz7.github.io/digest/**
+(with an RSS feed and a homepage card), optionally emailing the issue over SMTP.
+
+> ⚠️ **All digest content — every line of text and every image — is AI-generated
+> and may contain mistakes.** Each published issue carries this disclaimer.
+
+- **Auth:** Google ADC (Vertex) — no API keys or project ids in source.
+- **Models:** `gemini-3.1-flash-lite` (text + grounded Google Search) and
   `gemini-3.1-flash-lite-image` (diagrams).
-- **Theme:** Cohere-style **pink `#E5318A` + black + white**.
-- **Cost:** ~**$0.72/run** (measured; ~97% is image generation). Printed at the
-  end of every run.
+- **Cost:** ~**$0.73/run** (mostly image generation), printed at the end of every run.
+
+## Architecture
+
+```
+Cloud Scheduler (daily 06:17 UTC)
+  └─▶ Cloud Run Job "digest-job"  (runs as service account → native Vertex ADC)
+        └─▶ run_job.sh
+              ├─ python -m app.runner   # generate output/<date>/ (+ optional email)
+              └─ python publish.py       # push issue + RSS + homepage card to Pages repo
+```
+
+The GitHub PAT for the push lives in Secret Manager (`pages-token`); the digest is
+published to the separate Pages repo `gauravz7/gauravz7.github.io`.
+
+## Code layout
+
+| File | Responsibility |
+|------|----------------|
+| `app/config.py` | All tunables: categories, top-lab list, theme, model IDs, word/image budgets, news & blog windows, retry/backoff, pricing, SMTP |
+| `app/pipeline.py` | The engine — every stage + the shared GenAI client with 429/5xx failover; arXiv fetch, ranking, synthesis, grounded verify, images, news, blogs, SMTP dispatch |
+| `app/render.py` | Markdown→HTML: LaTeX→Unicode math, styled 💡/🔍/🏭 callouts, interleaved diagrams, the three section bands, and the AI-generated disclaimer (also a standalone CLI) |
+| `app/runner.py` | Headless orchestrator/CLI: runs the stages, writes `output/<YYYY-MM-DD>/`, prints per-run cost |
+| `publish.py` | Publishes an issue to the Pages repo: `/digest/<date>/`, rebuilds the archive index + RSS, and refreshes the homepage AI-Digest card |
+| `Dockerfile`, `run_job.sh`, `deploy_cloudrun.sh` | Container + Cloud Run Job entrypoint + one-shot GCP deploy |
 
 ## Pipeline stages
 
 ```
-Fetch ─▶ Select ─▶ Synthesize ─▶ Verify ─▶ Visuals ─▶ News ─▶ Build HTML ─▶ Dispatch
+Fetch ─▶ Select ─▶ Synthesize ─▶ Verify ─▶ Visuals ─▶ News ─▶ Blogs ─▶ Build HTML ─▶ Dispatch
 ```
-
-Four files:
-
-| File | Responsibility |
-|------|----------------|
-| `config.py` | All tunables: categories, top-lab list, theme, model IDs, word budgets, image counts, news window, retry/backoff, pricing, banned-word guard, SMTP |
-| `pipeline.py` | The engine — every stage + the shared GenAI client with 429/5xx failover |
-| `convert_md_to_full_html.py` | Markdown→HTML: LaTeX→Unicode math, styled 💡/🔍/🏭 callouts, images interleaved, **Research vs News Coverage** subsections (also a standalone CLI) |
-| `daily_arxiv_agent.py` | Orchestrator + CLI; runs the stages, writes `output/<YYYY-MM-DD>/`, prints per-run cost |
-
-| Stage | What it does |
-|-------|--------------|
-| Fetch | Recent papers (`cs.AI, cs.CL, cs.MA, cs.SE`) from the arXiv Atom API, **last 7 days**, agent-relevance filtered |
-| Select | LLM-assisted ranking on {top-lab likelihood, agent-relevance, measurable-impact} → top N |
-| Synthesize | One capped call per paper (~`PAPER_WORDS`≈1000), image-forward; includes a **Results & Measurable Improvement** table (baseline→proposed, absolute+relative deltas) and a **Where This Could Be Applied** takeaway |
-| Verify | Grounded second pass (`VERIFY_STATS`): fact-checks each paper's numbers via web search; corrects wrong values, marks unverifiable ones *(illustrative)* |
-| Visuals | **5 diagrams/paper**, **1/news topic**; shared pink/black/white style; on-theme placeholder fallback |
-| News | Grounded fetch (last 7 days) → rolling history → clusters over the last 7 days → top 3 topics. **Grounded synthesis that substantiates every claim with hard before→after numbers** (funding amounts, price/revenue/headcount changes). Real **citations** (title · source · date · link) |
-| Build HTML | Assembles the digest with **① Research** and **② News Coverage** subsections + TOC |
-| Dispatch | Writes the HTML + `.eml`; emails with inline images when SMTP is set, else dry-run to disk |
-
-## Resilience
 
 Every model call routes through a shared `_api()` wrapper with **429 / rate-limit /
-5xx failover**: exponential backoff + jitter (up to `MAX_RETRIES`), honoring a
-server `Retry-After`/`retryDelay` hint when present. Non-retryable errors (e.g.
-400/permission) fail fast. Text, JSON, image, grounded-search, and verify calls
-are all covered; image generation falls back to an on-theme placeholder only after
-retries are exhausted.
+5xx failover** (exponential backoff + jitter, honoring `Retry-After`). The arXiv
+Atom API has its own gentle retry policy and is non-fatal — on failure the pipeline
+falls back to grounded-search "trending" papers. Image generation falls back to an
+on-theme placeholder only after retries are exhausted.
 
-## Requirements
-
-- Python 3.10+
-- `google-genai`, `requests`, `pillow` (no other third-party deps; arXiv parsed
-  with stdlib, MD→HTML is custom)
-- **Google ADC**: `gcloud auth application-default login` (locally) or a
-  service-account key (in CI)
-
-## Usage
+## Run it locally
 
 ```bash
-python3 daily_arxiv_agent.py                 # full run, dry-run email
-python3 daily_arxiv_agent.py --quick         # fast smoke run (short text, 1 img/report, no verify)
-python3 daily_arxiv_agent.py --days 30 --top 3
-python3 daily_arxiv_agent.py --no-images     # placeholders instead of generated diagrams
-python3 daily_arxiv_agent.py --no-news       # papers only
-python3 daily_arxiv_agent.py --send          # actually email (needs SMTP_* env vars)
+uv sync --no-dev                                   # install runtime deps
+gcloud auth application-default login              # ADC for Vertex
+export GOOGLE_CLOUD_PROJECT=<your-project> GOOGLE_CLOUD_LOCATION=global
+
+uv run python -m app.runner --days 7 --top 3       # full run → output/<date>/
+uv run python -m app.runner --quick --no-images    # fast smoke test
+uv run python -m app.runner --send                 # also email (needs SMTP_* env)
 ```
 
-### Live email
-Set these env vars, then add `--send`:
-```
-SMTP_HOST  SMTP_PORT  SMTP_USER  SMTP_PASS  EMAIL_FROM  EMAIL_TO
+Then optionally publish to a local checkout of the Pages repo:
+
+```bash
+uv run python publish.py --date $(date -u +%F) --site /path/to/gauravz7.github.io \
+  --base-url https://gauravz7.github.io/digest
 ```
 
-## Configuration (`config.py`)
+## Deploy the daily job (GCP)
 
-- **Content:** `CATEGORIES`, `WINDOW_DAYS`, `TOP_N`, `PAPER_WORDS`, `NEWS_WORDS`, `DIGEST_WORD_BUDGET`
-- **Visuals:** `IMAGES_PER_PAPER=5`, `NEWS_IMAGES=1`, `THEME` (pink/black/white), `IMAGE_STYLE_PREFIX`
-- **News:** `NEWS_TOP_N`, `NEWS_PER_RUN`, `NEWS_HISTORY_DAYS=7`
-- **Quality:** `VERIFY_STATS`, `BANNED_WORDS`
-- **Resilience:** `MAX_RETRIES`, `RETRY_BASE_DELAY`, `RETRY_MAX_DELAY`
-- **Cost estimate:** `PRICE_TEXT_INPUT_PER_M`, `PRICE_TEXT_OUTPUT_PER_M`, `PRICE_PER_IMAGE`
+One-time, from the repo root with gcloud authenticated (`gcloud config set project <id>`):
+
+```bash
+# store the GitHub PAT (write access to the Pages repo) once:
+gh auth token | gcloud secrets create pages-token --data-file=-
+
+bash deploy_cloudrun.sh          # SA + IAM, build image, deploy job, create daily scheduler
+gcloud run jobs execute digest-job --region us-central1 --wait   # test now
+```
+
+`deploy_cloudrun.sh` is idempotent — re-run it to redeploy after code changes.
+
+## Email
+
+**Path A — SMTP (this repo):** export `SMTP_HOST SMTP_PORT SMTP_USER SMTP_PASS
+EMAIL_FROM EMAIL_TO` and run with `--send`. `EMAIL_TO` may be a comma/semicolon list.
+To enable it on the daily job, create an `smtp-pass` secret and export the SMTP vars
+before running `deploy_cloudrun.sh` (see comments in that script). Without SMTP env,
+`--send` is a harmless dry-run that writes `digest.eml`.
+
+**Path B — newsletter (recommended for subscribers):** point an email service
+(MailerLite, Buttondown, …) at the published feed `…/digest/rss.xml` to auto-send
+each new issue to your subscriber list, and paste a signup form into the placeholder
+in `publish.py`.
 
 ## Output layout
 
 ```
 output/
-├── news_history.jsonl                      # rolling news store (dated per run)
-└── 2026-07-21/
+├── news_history.jsonl / blog_history.jsonl   # rolling stores (dated per run)
+└── 2026-07-23/
     ├── paper1_<slug>_deepdive.md
     ├── news1_<slug>_brief.md
-    ├── images/                             # generated diagrams (interleaved)
-    ├── top_arxiv_agent_paper_email.html    # final HTML digest
-    └── digest.eml                          # email artifact (inline images)
+    ├── images/                               # generated diagrams (interleaved)
+    ├── top_arxiv_agent_paper_email.html      # final HTML digest
+    └── digest.eml                            # email artifact (inline images)
 ```
 
-## Scheduling
+## Requirements
 
-Twice a week (Mon & Thu), e.g. cron / GitHub Actions (UTC):
-
-```
-0 6 * * 1,4  cd /path/InfoAgent && python3 daily_arxiv_agent.py --send >> output/cron.log 2>&1
-```
-
-At ~$0.72/run, Mon/Thu ≈ **$6/month**. News clusters over the last 7 days, so
-persistent stories rise to the top as history accumulates.
-
-## Cost per run
-
-Text is ~$0.02; the rest is images (18 × ~$0.039 ≈ $0.70). Lower it by reducing
-`IMAGES_PER_PAPER`. Sending is separate (an ESP like MailerLite is free to 1,000
-subscribers / 12k emails per month).
+- Python 3.11+
+- `google-genai`, `requests`, `pillow` (no other third-party deps; arXiv parsed
+  with stdlib, MD→HTML is custom)
+- **Google ADC** for Vertex; the Cloud Run Job uses its attached service account.
