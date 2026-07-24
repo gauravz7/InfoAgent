@@ -11,7 +11,10 @@
 # Vertex/Gemini auth is native ADC from the attached service account (no key file).
 set -euo pipefail
 
-DATE="$(date -u +%F)"
+# Stamp issues with the Singapore local date (the digest's audience/schedule tz).
+# The 06:00 SGT run happens at 22:00 UTC the prior day, so `date -u` would label
+# it a day behind — use Asia/Singapore instead.
+DATE="$(TZ=Asia/Singapore date +%F)"
 PAGES_REPO="${PAGES_REPO:-gauravz7/gauravz7.github.io}"
 DIGEST_BASE_URL="${DIGEST_BASE_URL:-https://gauravz7.github.io/digest}"
 
