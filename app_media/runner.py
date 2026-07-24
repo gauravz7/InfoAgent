@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Ambient (headless) end-to-end digest run for schedule / Cloud Run Job.
+"""Ambient (headless) end-to-end generative-media digest run for the weekly job.
 
-This is the non-interactive twin of the interactive orchestrator in ``agent.py``.
+This is the self-contained twin of ``app/runner.py``, scoped to generative media.
 It runs all six stages start-to-finish and writes everything under
-``output/<YYYY-MM-DD>/`` -- the same behavior as the pre-agent
-``daily_arxiv_agent.py`` entrypoint, now living inside the ADK package.
+``output_media/<YYYY-MM-DD>/`` (a separate root from the daily digest).
 
     Fetch -> Select -> Synthesize -> Render Visuals -> Build MD & HTML -> Dispatch
 
 Usage (from repo root):
-    uv run python -m app.runner                 # full live run, dry-run email
-    uv run python -m app.runner --quick         # fast smoke run
-    uv run python -m app.runner --days 30 --top 3
-    uv run python -m app.runner --no-images     # skip image generation
-    uv run python -m app.runner --send          # actually email (needs SMTP env)
+    uv run python -m app_media.runner                 # full live run, dry-run email
+    uv run python -m app_media.runner --quick         # fast smoke run
+    uv run python -m app_media.runner --days 30 --top 3
+    uv run python -m app_media.runner --no-images     # skip image generation
+    uv run python -m app_media.runner --send          # actually email (needs SMTP env)
 """
 
 from __future__ import annotations
@@ -60,7 +59,7 @@ def _guard_no_banned(text: str, where: str) -> str:
 
 def _news_source_html(topic) -> str:
     head = (
-        f'<p class="paper-src"><strong>Clustered AI-news topic</strong> · '
+        f'<p class="paper-src"><strong>Clustered generative-media news topic</strong> · '
         f'appeared across <strong>{topic.run_span}</strong> recent run(s) · '
         f'salience {topic.salience:.1f}/10</p>'
     )
@@ -117,7 +116,7 @@ def run(days: int, top_n: int, quick: bool, no_images: bool, send: bool,
     news_imgs = 1 if quick else config.NEWS_IMAGES             # lean news visuals
 
     pipeline.reset_usage()
-    print(f"=== ArXiv AI-Agent Daily Digest · {today} "
+    print(f"=== Generative Media Weekly Digest · {today} "
           f"({'QUICK' if quick else 'FULL'} run) ===")
 
     # 1. Fetch --------------------------------------------------------------
@@ -225,17 +224,17 @@ def run(days: int, top_n: int, quick: bool, no_images: bool, send: bool,
 
     # 5. Build full HTML ----------------------------------------------------
     print("[5/6] Build MD & HTML")
-    subtitle = (f"Top {len(paper_sections)} AI-agent papers (last {days} days)"
-                + (f" + Top {len(news_sections)} AI-news topics" if news_sections else "")
+    subtitle = (f"Top {len(paper_sections)} generative-media papers (last {days} days)"
+                + (f" + Top {len(news_sections)} media-news topics" if news_sections else "")
                 + (f" + Top {len(blog_sections)} eng blogs" if blog_sections else ""))
-    title = "ArXiv AI-Agent Research Digest"
+    title = "Generative Media Weekly Digest"
     full_html = build_full_html(title, subtitle, today, paper_sections,
                                 news_sections, blog_sections, events=events)
     full_html = _guard_no_banned(full_html, "final HTML")
 
     # 6. Dispatch -----------------------------------------------------------
     print("[6/6] Dispatch")
-    subject = f"🤖 ArXiv AI-Agent Digest · {today} · Top {len(paper_sections)} papers"
+    subject = f"🎨 Generative Media Weekly · {today} · Top {len(paper_sections)} papers"
     result = pipeline.dispatch(full_html, subject, out_dir, images_dir,
                       dry_run=not send, verbose=verbose)
 
@@ -253,7 +252,7 @@ def run(days: int, top_n: int, quick: bool, no_images: bool, send: bool,
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Ambient ArXiv AI-agent digest run")
+    ap = argparse.ArgumentParser(description="Ambient generative-media weekly digest run")
     ap.add_argument("--days", type=int, default=config.WINDOW_DAYS,
                     help=f"lookback window in days (default {config.WINDOW_DAYS})")
     ap.add_argument("--top", type=int, default=config.TOP_N,

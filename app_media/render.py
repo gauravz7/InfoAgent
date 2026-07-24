@@ -28,35 +28,8 @@ DISCLAIMER_TEXT = (
     "important details against the linked primary sources before relying on them."
 )
 
-# MailerLite Universal snippet — belongs right before </head> on every page so the
-# signup form/pop-up (ml('show', ...)) works. Plain (non-f) string: its braces are
-# literal JS and must NOT be touched by f-string formatting.
-MAILERLITE_ACCOUNT = "2523453"
-MAILERLITE_UNIVERSAL = """<!-- MailerLite Universal -->
-<script>
-    (function(w,d,e,u,f,l,n){w[f]=w[f]||function(){(w[f].q=w[f].q||[])
-    .push(arguments);},l=d.createElement(e),l.async=1,l.src=u,
-    n=d.getElementsByTagName(e)[0],n.parentNode.insertBefore(l,n);})
-    (window,document,'script','https://assets.mailerlite.com/js/universal.js','ml');
-    ml('account', '2523453');
-</script>
-<!-- End MailerLite Universal -->"""
-
-# Visible subscribe call-to-action shown near the top of every issue page. Links
-# down to the embedded signup form (#signup) at the end of the page.
-MAILERLITE_SUBSCRIBE_CTA = (
-    '<div class="subscribe-cta">'
-    '<a class="subscribe-link" href="#signup">'
-    '📬 Get this daily digest in your inbox — Subscribe free</a>'
-    '</div>'
-)
-
-# Inline embedded signup form (renders in-page via universal.js; no popup). Lives
-# at the end of the page under id="signup" so the top CTA can jump to it.
-MAILERLITE_EMBED = (
-    '<div id="signup" class="subscribe-embed">'
-    '<div class="ml-embedded" data-form="xs3Yrq"></div></div>'
-)
+# NOTE: this generative-media digest has no email signup yet, so (unlike the daily
+# ``app/render.py``) it deliberately carries NO MailerLite snippet/form.
 
 # --------------------------------------------------------------------------- #
 # LaTeX / math -> Unicode
@@ -515,14 +488,14 @@ def build_full_html(title: str, subtitle: str, date_str: str,
     news_block = ""
     if news_sections:
         news_block = (
-            _band(f"② News Coverage — Top {len(news_sections)} AI stories (last 7 days)")
-            + _render_group(news_sections, "news", "AI NEWS")
+            _band(f"② News — Top {len(news_sections)} generative-media stories (last 7 days)")
+            + _render_group(news_sections, "news", "MEDIA NEWS")
         )
     # Subsection 3 — Engineering blogs
     blog_block = ""
     if blog_sections:
         blog_block = (
-            _band(f"③ Engineering — Top {len(blog_sections)} practical AI-agent blogs")
+            _band(f"③ Engineering — Top {len(blog_sections)} generative-media build blogs")
             + _render_group(blog_sections, "blog", "ENG BLOG")
         )
 
@@ -541,26 +514,23 @@ def build_full_html(title: str, subtitle: str, date_str: str,
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)}</title>
 <style>{_css()}</style>
-{MAILERLITE_UNIVERSAL}
 </head>
 <body><div class="wrap">
   <header class="masthead">
-    <div class="kicker">ArXiv AI-Agent Research Digest</div>
+    <div class="kicker">{html.escape(config.DIGEST_KICKER)}</div>
     <h1>{html.escape(title)}</h1>
     <div class="meta">{html.escape(subtitle)} &nbsp;·&nbsp; {html.escape(date_str)}</div>
   </header>
-  {MAILERLITE_SUBSCRIBE_CTA}
   {_event_banner(events)}
   {toc_html}
   <article>{body}{news_block}{blog_block}</article>
-  {MAILERLITE_EMBED}
   <div class="disclaimer" role="note">
     <strong>⚠️ AI-generated:</strong> {html.escape(DISCLAIMER_TEXT)}
   </div>
   <div class="footer">
-    Generated autonomously by the ArXiv AI-Agent Daily Pipeline · Sources: arXiv
-    ({', '.join(config.CATEGORIES)}) + grounded AI-news search · Visual Theme:
-    Minimalist Plain White Background (#FFFFFF).
+    Generated autonomously by the Generative Media Weekly Pipeline · Sources: arXiv
+    ({', '.join(config.CATEGORIES)}) + grounded generative-media search · Visual
+    Theme: Minimalist Plain White Background (#FFFFFF).
   </div>
 </div>
 </body></html>"""

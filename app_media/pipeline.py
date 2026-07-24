@@ -1,12 +1,12 @@
-"""ArXiv AI-Agent digest engine -- all pipeline stages in one module.
+"""Generative-media digest engine -- all pipeline stages in one module.
 
 Read top-to-bottom, this file is the six stages in order:
 
     GenAI client -> Fetch -> Select -> Synthesize -> Visuals -> News -> Dispatch
 
 Auth is Google ADC (Vertex); models come from config. No API keys in source.
-The orchestrator (daily_arxiv_agent.py) wires these together; HTML rendering
-lives in convert_md_to_full_html.py.
+This is the self-contained twin of ``app/pipeline.py``, with the topic framing
+(prompts + keyword filter) scoped to generative media via ``config.TOPIC_*``.
 """
 
 from __future__ import annotations
@@ -308,9 +308,9 @@ def _fetch_page(search_query: str, start: int, page_size: int) -> List[Paper]:
     raise last_exc or requests.HTTPError("arXiv fetch failed")
 
 
-def is_agent_relevant(paper: Paper) -> bool:
+def is_topic_relevant(paper: Paper) -> bool:
     hay = (paper.title + " " + paper.abstract).lower()
-    return any(kw in hay for kw in config.AGENT_KEYWORDS)
+    return any(kw in hay for kw in config.MEDIA_KEYWORDS)
 
 
 def _norm_title(t: str) -> str:
@@ -331,11 +331,10 @@ def fetch_trending_papers(days: int = None, n: int = None, verbose: bool = True)
     days = days or config.WINDOW_DAYS
     tool = types.Tool(google_search=types.GoogleSearch())
     prompt = (
-        f"Search the web for the {n} most TRENDING / most-discussed ARTIFICIAL "
-        f"INTELLIGENCE research papers from the LAST {days} DAYS — papers getting "
+        f"Search the web for the {n} most TRENDING / most-discussed GENERATIVE "
+        f"MEDIA research papers from the LAST {days} DAYS — papers getting "
         "significant attention on X/Twitter, Hacker News, Reddit r/MachineLearning, "
-        "AI newsletters and press. Favor work on AI AGENTS, LLMs, reasoning, tool "
-        "use and multi-agent systems, but include any genuinely major AI paper. "
+        f"AI newsletters and press. {config.TOPIC_TRENDING_FAVOR} "
         "Prefer papers that have an arXiv ID. For each give: the exact title; the "
         "arXiv id (e.g. 2506.12345) if one exists, else an empty string; up to 8 "
         "author names; the primary arXiv category if known (e.g. cs.AI); the "
@@ -391,7 +390,8 @@ def fetch_candidates(days: int = None, max_candidates: int = None,
     """Recent, de-duplicated candidate papers within the lookback window.
 
     Two complementary sources, merged and de-duplicated (by arXiv id, then title):
-      1. arXiv Atom API category mining (cs.AI/CL/MA/SE), filtered to agent-relevant.
+      1. arXiv Atom API category mining (cs.CV/GR/MM/SD, eess.AS/IV), filtered to
+         generative-media-relevant.
       2. (``include_trending``) grounded-search "top trending papers" of the last N
          days. The arXiv fetch is best-effort: if the API errors out (e.g. a 429
          rate-limit) the run continues on the trending source alone rather than
@@ -423,7 +423,7 @@ def fetch_candidates(days: int = None, max_candidates: int = None,
                 pd = _dt.date.today()
             if pd >= cutoff:
                 all_old = False
-                if p.arxiv_id not in collected and is_agent_relevant(p):
+                if p.arxiv_id not in collected and is_topic_relevant(p):
                     collected[p.arxiv_id] = p
         start += page_size
         if all_old:  # whole page older than cutoff -> stop paging
@@ -431,7 +431,7 @@ def fetch_candidates(days: int = None, max_candidates: int = None,
         time.sleep(3.0)  # arXiv manual: keep >=3s between consecutive calls
 
     if verbose:
-        print(f"  [fetch] {len(collected)} agent-relevant arXiv papers since "
+        print(f"  [fetch] {len(collected)} generative-media arXiv papers since "
               f"{cutoff.isoformat()} across {', '.join(config.CATEGORIES)}")
 
     # Merge in grounded "trending" papers (dedupe by arXiv id, then by title).
@@ -466,15 +466,14 @@ def _score_batch(batch: List[Paper]) -> dict:
     items = [{"i": i, "title": p.title, "authors": p.author_line,
               "abstract": p.abstract[:1200]} for i, p in enumerate(batch)]
     prompt = (
-        "You are a senior AI research editor curating a daily digest of the most "
-        "important new papers on AI AGENTS (LLM agents, tool use, multi-agent "
-        "systems, autonomous reasoning/planning).\n\n"
+        "You are a senior AI research editor curating a weekly digest of the most "
+        f"important new papers on {config.TOPIC_PAPER_FOCUS}.\n\n"
         "For EACH paper, infer likely affiliation from names/phrasing/abstract and "
         "score 0-10 on three axes:\n"
         "  lab       = likelihood it is from a top-tier lab (Google, DeepMind, "
-        "OpenAI, Meta/FAIR, Microsoft Research, MIT, Stanford, Berkeley, CMU, "
-        "Princeton, NVIDIA, AI2, ...).\n"
-        "  relevance = how squarely it is about AI AGENTS.\n"
+        "OpenAI, Meta/FAIR, Stability AI, Runway, Adobe, ElevenLabs, Black Forest "
+        "Labs, NVIDIA, MIT, Stanford, Berkeley, CMU, ...).\n"
+        "  relevance = how squarely it is about GENERATIVE MEDIA.\n"
         "  impact    = strength of concrete, MEASURABLE results/benchmarks.\n\n"
         'Return STRICT JSON: array of {"i":int,"lab":float,"relevance":float,'
         '"impact":float,"labs":[strings],"rationale":"one sentence"}.\n\n'
@@ -612,9 +611,10 @@ vague. Do NOT exceed the word cap. Clean Markdown only, no outer code fence.
 """
 
 _BLOG_SPEC = """Write a SHORT Markdown briefing of the ENGINEERING BLOG post below — a recent
-practical "how we built it" write-up on AI agents from a top engineering org.
-About {words} words TOTAL (hard cap {cap}). Tight, concrete and skimmable, aimed
-at an engineer who wants to know whether to read the full post.
+practical "how we built it" write-up on generative media (image/video/audio/music)
+from a top engineering org. About {words} words TOTAL (hard cap {cap}). Tight,
+concrete and skimmable, aimed at an engineer who wants to know whether to read the
+full post.
 
 STRICT STRUCTURE (exact headings):
 
@@ -629,7 +629,7 @@ STRICT STRUCTURE (exact headings):
   or orchestration patterns, evals, guardrails. Prefer specifics over generalities.
 
 ## 3. Takeaways You Can Apply
-- 2-3 bullets an engineer could reuse in their own agent system.
+- 2-3 bullets an engineer could reuse in their own generative-media system.
 
 RULES: Ground everything in the post; use web search to confirm the specifics. Do
 NOT invent numbers the post does not report. Stay under the word cap. Clean
@@ -914,10 +914,10 @@ def fetch_recent_news(run_id: str, days: int = None, n: int = None, verbose: boo
     days = days or config.NEWS_HISTORY_DAYS
     tool = types.Tool(google_search=types.GoogleSearch())
     prompt = (
-        f"Search the web for the {n} most important and widely-covered ARTIFICIAL "
-        f"INTELLIGENCE news stories published in the LAST {days} DAYS ONLY (model "
-        "launches, research breakthroughs, major funding/regulation, enterprise AI "
-        "moves, agent/tooling releases). Exclude anything older than "
+        f"Search the web for the {n} most important and widely-covered "
+        f"{config.TOPIC_NEWS_FOCUS} news stories published in the LAST {days} DAYS "
+        "ONLY (model launches, product releases, research breakthroughs, major "
+        "funding/regulation, creative-tooling moves). Exclude anything older than "
         f"{days} days. For each give: a specific headline; a 1-2 sentence factual "
         "summary that INCLUDES the key hard numbers (exact funding amount and "
         "valuation, price before→after, revenue/headcount before→after, %); the "
@@ -1083,17 +1083,17 @@ def _blog_history_path() -> str:
 
 def fetch_engineering_blogs(run_id: str, days: int = None, n: int = None,
                             verbose: bool = True) -> List[dict]:
-    """Grounded search for recent PRACTICAL AI-agent implementation blog posts."""
+    """Grounded search for recent PRACTICAL generative-media implementation blog posts."""
     n = n or config.BLOG_PER_RUN
     days = days or config.BLOG_HISTORY_DAYS
     orgs = ", ".join(config.BLOG_SOURCES)
     tool = types.Tool(google_search=types.GoogleSearch())
     prompt = (
         f"Search the web for the {n} best RECENT engineering-blog posts about "
-        "BUILDING AI AGENTS / agentic systems — practical 'how we built it' "
-        "write-ups with real implementation detail (architecture, orchestration, "
-        "tool use, memory, evals, prompts, guardrails, production lessons). Favor "
-        f"posts published in the LAST {days} DAYS; skip anything clearly older. "
+        f"{config.TOPIC_BLOG_FOCUS} — practical 'how we built it' "
+        "write-ups with real implementation detail (pipelines, model choice/"
+        "fine-tuning, serving, prompting, evals, guardrails, production lessons). "
+        f"Favor posts published in the LAST {days} DAYS; skip anything clearly older. "
         f"Prioritize the engineering blogs of: {orgs} — and other reputable "
         "engineering orgs. Exclude marketing pages, model release notes with no "
         "implementation detail, and pure opinion pieces. For each give: the exact "
@@ -1186,12 +1186,13 @@ def select_blogs(days: int = None, top_n: int = None, verbose: bool = True) -> L
                 "summary": it.get("summary", ""), "source": it.get("source", ""),
                 "date": it.get("date", "")} for idx, it in enumerate(unique)]
     prompt = (
-        "You are an engineering editor curating a digest of PRACTICAL AI-agent "
-        "implementation blog posts. Below are candidate posts (each with an id 'i') "
-        f"collected over the last {days} days ({n_runs} run(s)). Pick the TOP "
-        f"{top_n} that are the most useful to an engineer BUILDING agents — favor "
-        "concrete implementation detail, credible orgs, and recency; drop marketing "
-        "and duplicates. For each pick, write a one-line 'why' (why an agent builder "
+        "You are an engineering editor curating a digest of PRACTICAL "
+        "generative-media implementation blog posts. Below are candidate posts "
+        f"(each with an id 'i') collected over the last {days} days ({n_runs} "
+        f"run(s)). Pick the TOP {top_n} that are the most useful to an engineer "
+        "BUILDING with generative media (image/video/audio/music) — favor concrete "
+        "implementation detail, credible orgs, and recency; drop marketing and "
+        "duplicates. For each pick, write a one-line 'why' (why a media builder "
         "should read it) and a salience score 0-10.\n\n"
         'Return STRICT JSON: array of {"i":int,"why":str,"salience":float}.\n\n'
         f"POSTS:\n{json.dumps(compact, ensure_ascii=False)}"
@@ -1236,15 +1237,15 @@ def select_blogs(days: int = None, top_n: int = None, verbose: bool = True) -> L
 
 
 # =========================================================================== #
-# Upcoming events -- grounded search for the next big AI events (with links)
+# Upcoming events -- grounded search for the next big events (with links)
 # =========================================================================== #
 def fetch_upcoming_events(n: int = None, verbose: bool = True) -> List[dict]:
-    """Grounded search for the next major UPCOMING AI events, with links.
+    """Grounded search for the next major UPCOMING events, with links.
 
-    Returns up to `n` forthcoming events sorted soonest-first, each shaped as
-    ``{name, date, end_date, location, url, why}``. Best-effort: returns [] on any
-    failure so a missing events box never blocks the digest. Events dated in the
-    past are dropped defensively.
+    Returns up to `n` forthcoming generative-media events sorted soonest-first,
+    each shaped as ``{name, date, end_date, location, url, why}``. Best-effort:
+    returns [] on any failure so a missing events box never blocks the digest.
+    Events dated in the past are dropped defensively.
     """
     n = n or config.EVENT_TOP_N
     tool = types.Tool(google_search=types.GoogleSearch())

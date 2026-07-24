@@ -4,6 +4,7 @@ __pycache__/
 venv/
 # generated artifacts (kept out of the code repo)
 output/
+output_media/
 *.eml
 # archived ADK agent / eval / tests and CLI runtime artifacts (kept on disk only)
 archive/

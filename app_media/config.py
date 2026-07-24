@@ -1,11 +1,13 @@
-"""Central configuration for the ArXiv AI-Agent Research Digest agent.
+"""Central configuration for the Generative Media Weekly Digest agent.
 
 All tunables, theme tokens, model IDs and constants live here so the rest of the
 package stays declarative. No secrets are stored here -- authentication is via
 Google Application Default Credentials (ADC) and optional SMTP env vars.
 
-Importing this module also wires the GenAI/Vertex environment (project, location,
-USE_VERTEXAI) the way the ADK expects, mirroring the google-agents-cli samples.
+This is the self-contained twin of ``app/config.py``: same infrastructure and
+theme, but scoped to GENERATIVE MEDIA (image/video generation, image & video
+editing, speech and music generation) and writing to its own ``output_media/``
+root so it never collides with the daily AI-agent digest.
 """
 
 from __future__ import annotations
@@ -58,10 +60,53 @@ PRICE_TEXT_OUTPUT_PER_M = float(os.environ.get("PRICE_TEXT_OUTPUT_PER_M", "0.40"
 PRICE_PER_IMAGE = float(os.environ.get("PRICE_PER_IMAGE", "0.039"))                # $/generated image
 
 # --------------------------------------------------------------------------- #
+# Topic framing  (generative media — threaded into the pipeline prompts)
+# --------------------------------------------------------------------------- #
+# One place to phrase "what this digest is about" so the copied pipeline prompts
+# stay media-specific. Scope: image generation, video generation, image & video
+# editing, speech generation, music generation.
+DIGEST_KICKER = "Generative Media Weekly Digest"
+
+# Short noun phrase for the subject area (used mid-sentence in prompts).
+TOPIC_PAPER_FOCUS = (
+    "GENERATIVE MEDIA (image generation, video generation, image and video "
+    "editing, speech/audio generation, and music generation — e.g. diffusion "
+    "models, text-to-image, text-to-video, image/video editing, text-to-speech, "
+    "voice cloning, and music/audio synthesis)"
+)
+TOPIC_TRENDING_FAVOR = (
+    "Favor work on GENERATIVE MEDIA — image generation, video generation, image "
+    "and video editing, speech/audio generation and music generation (diffusion "
+    "models, text-to-image, text-to-video, editing, TTS/voice, music synthesis) — "
+    "but include any genuinely major generative-media paper."
+)
+TOPIC_NEWS_FOCUS = (
+    "GENERATIVE MEDIA (image, video, audio/speech and music generation and "
+    "editing — model launches, product releases, research breakthroughs, major "
+    "funding/regulation, and creative-tooling moves)"
+)
+TOPIC_BLOG_FOCUS = (
+    "BUILDING WITH GENERATIVE MEDIA — practical work with image/video generation "
+    "and editing, speech/voice synthesis, and music/audio generation (pipelines, "
+    "model fine-tuning, serving, prompting, evals, guardrails, production lessons)"
+)
+
+# Upcoming events track: what counts as a "big event" for the grounded search
+# (phrased mid-sentence). Scoped to generative-media + creative-AI gatherings.
+EVENT_TOP_N = 3
+EVENT_FOCUS = (
+    "GENERATIVE MEDIA and creative-AI (major conferences, summits and product "
+    "launch events for image, video, audio/speech and music generation — e.g. "
+    "SIGGRAPH, CVPR, ICCV, NAB Show, Adobe MAX, IBC, Google I/O and launch events "
+    "from image/video/audio generative-AI labs)"
+)
+
+# --------------------------------------------------------------------------- #
 # Paper mining
 # --------------------------------------------------------------------------- #
 ARXIV_API = "https://export.arxiv.org/api/query"
-CATEGORIES = ["cs.AI", "cs.CL", "cs.MA", "cs.SE"]
+# Vision / graphics / multimedia / sound / audio-speech / image-&-video processing.
+CATEGORIES = ["cs.CV", "cs.GR", "cs.MM", "cs.SD", "eess.AS", "eess.IV"]
 
 WINDOW_DAYS = 7          # rolling lookback window (override via tool/CLI arg)
 TOP_N = 3               # number of papers to feature (override via tool/CLI arg)
@@ -69,7 +114,7 @@ MAX_CANDIDATES = 180     # how many recent papers to pull before ranking
 TRENDING_PER_RUN = 12    # grounded-search "top trending papers" merged into the pool
 
 # --------------------------------------------------------------------------- #
-# Recent AI news track  (grounded search -> rolling history -> cluster top 3)
+# Recent generative-media news track  (grounded search -> history -> cluster)
 # --------------------------------------------------------------------------- #
 NEWS_TOP_N = 3               # number of clustered news TOPICS to feature
 NEWS_PER_RUN = 12            # raw headlines pulled each run before clustering
@@ -78,8 +123,8 @@ NEWS_HISTORY_FILE = "news_history.jsonl"  # rolling store under OUTPUT_ROOT
 
 # --------------------------------------------------------------------------- #
 # Engineering blogs track  (grounded search -> rolling history -> pick top N)
-# Recent PRACTICAL "how we built X" AI-agent implementation posts from top eng
-# orgs. Longer lookback than news: good implementation write-ups trickle out.
+# Recent PRACTICAL "how we built X" generative-media posts from top eng orgs.
+# Longer lookback than news: good implementation write-ups trickle out.
 # --------------------------------------------------------------------------- #
 BLOG_TOP_N = 4               # number of engineering blog posts to feature
 BLOG_PER_RUN = 12            # raw posts pulled each run before ranking
@@ -88,32 +133,27 @@ BLOG_HISTORY_FILE = "blog_history.jsonl"  # rolling store under OUTPUT_ROOT
 BLOG_WORDS = 220             # ~words per blog briefing (link-forward, concise)
 BLOG_IMAGES = 0              # blogs stay text/link-forward: no generated diagrams
 
-# Engineering orgs whose blogs we mine for practical AI-agent implementation
-# posts. Grounded search is scoped to these plus "and more".
+# Engineering orgs whose blogs we mine for practical generative-media work.
+# Grounded search is scoped to these plus "and more".
 BLOG_SOURCES = [
-    "Anthropic", "OpenAI", "Manus", "Netflix", "Uber", "Google",
-    "Google DeepMind", "Microsoft", "AWS", "Meta", "LangChain", "LlamaIndex",
-    "Hugging Face", "NVIDIA", "Databricks", "Pinecone",
+    "OpenAI", "Google", "Google DeepMind", "Google Research", "Meta", "Meta AI",
+    "Stability AI", "Runway", "Pika", "Luma AI", "Midjourney",
+    "Black Forest Labs", "Adobe", "ElevenLabs", "Suno", "Udio", "NVIDIA",
+    "ByteDance", "Kuaishou", "HeyGen", "Topaz Labs", "Hugging Face",
 ]
 
-# --------------------------------------------------------------------------- #
-# Upcoming events track  (grounded search: the next big AI events, with links)
-# --------------------------------------------------------------------------- #
-EVENT_TOP_N = 3              # number of upcoming events to feature at the top
-# What counts as a "big AI event" for the grounded search (phrased mid-sentence).
-EVENT_FOCUS = (
-    "ARTIFICIAL INTELLIGENCE (major AI/ML conferences, summits, developer "
-    "conferences and model/product launch events — e.g. NeurIPS, ICML, ICLR, "
-    "CVPR, Google I/O, Microsoft Build, OpenAI DevDay, NVIDIA GTC, AI Engineer "
-    "Summit)"
-)
-
-# Terms that flag a paper as being about AI agents (cheap pre-filter).
-AGENT_KEYWORDS = [
-    "agent", "agentic", "tool use", "tool-use", "multi-agent", "multiagent",
-    "llm agent", "autonomous", "planning", "reasoning", "orchestration",
-    "workflow", "function calling", "react", "self-refine", "self-correct",
-    "memory", "environment", "reinforcement", "world model", "controller",
+# Terms that flag a paper as being about generative media (cheap pre-filter).
+MEDIA_KEYWORDS = [
+    "diffusion", "text-to-image", "text to image", "text-to-video",
+    "text to video", "image generation", "video generation", "image editing",
+    "video editing", "inpainting", "outpainting", "super-resolution",
+    "super resolution", "generative", "gan", "vae", "latent diffusion",
+    "video synthesis", "image synthesis", "text-to-speech", "text to speech",
+    "tts", "speech synthesis", "voice synthesis", "voice cloning",
+    "voice conversion", "music generation", "audio generation",
+    "sound generation", "talking head", "avatar", "style transfer",
+    "neural rendering", "3d generation", "novel view", "vocoder", "singing",
+    "lip sync", "lip-sync", "flow matching", "consistency model", "autoregressive",
 ]
 
 # Prestigious labs/affiliations we boost when detectable (name-heuristic +
@@ -121,6 +161,8 @@ AGENT_KEYWORDS = [
 TOP_LABS = [
     "Google", "DeepMind", "Google DeepMind", "Google Research", "Google Brain",
     "OpenAI", "Meta", "Meta AI", "FAIR", "Microsoft", "Microsoft Research",
+    "Stability AI", "Runway", "Adobe", "Adobe Research", "ElevenLabs",
+    "Black Forest Labs", "Luma AI", "Midjourney", "Pika", "Kuaishou", "ByteDance",
     "MIT", "Stanford", "Berkeley", "UC Berkeley", "CMU", "Carnegie Mellon",
     "Princeton", "Oxford", "Cambridge", "ETH", "Tsinghua", "Allen Institute",
     "AI2", "NVIDIA", "Cohere", "Mistral", "Amazon", "AWS", "Apple", "IBM",
@@ -156,12 +198,13 @@ IMAGE_STYLE_PREFIX = (
 # --------------------------------------------------------------------------- #
 # Output & guardrails
 # --------------------------------------------------------------------------- #
-# Repo-root output/ (one level up from this app/ package) so the rolling
-# news_history.jsonl and prior issues carry over from the pre-agent pipeline.
+# Repo-root output_media/ (one level up from this app_media/ package). SEPARATE
+# from the daily digest's output/ so the two digests' rolling history and prior
+# issues never collide.
 OUTPUT_ROOT = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output"
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output_media"
 )
-FINAL_HTML_NAME = "top_arxiv_agent_paper_email.html"
+FINAL_HTML_NAME = "top_generative_media_email.html"
 
 # Words that must NEVER appear in any generated artifact. (Empty: no ban.)
 BANNED_WORDS = []
